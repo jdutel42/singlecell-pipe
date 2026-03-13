@@ -1,0 +1,56 @@
+/* =========================
+   1. Texte Markdown
+========================= */
+
+body {
+  font-size: 1.05rem;
+  line-height: 1.7;
+  font-family: "Source Serif Pro", serif;
+}
+
+p {
+  margin-bottom: 1.1rem;
+}
+
+code, pre {
+  font-family: "Fira Code", monospace;
+}
+
+/* =========================
+   2. Code source (chunk)
+========================= */
+
+pre.sourceCode {
+  font-size: 0.85rem;
+  border-radius: 8px;
+}
+
+/* =========================
+   3. Output des chunks
+========================= */
+
+div.cell-output {
+  background-color: #f8f9fa;
+  border-left: 4px solid #31BAE9;
+  padding: 0.8rem;
+  margin-top: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+/* =========================
+   4. Console output (R)
+========================= */
+
+div.cell-output pre {
+  color: #333;
+  font-family: "Courier New", monospace;
+}
+
+
+
+
+
+
+
+

@@ -1,0 +1,2596 @@
+---
+title: "HD vs MM – scRNA-seq All T Cell Analysis"
+subtitle: "Integrated multi-sample reanalysis"
+author: 
+  - name: Jordan Dutel
+    affiliation: 
+      - CRCT – CHU Toulouse
+      - GENIM Team
+    email: jordan.dutel@inserm.fr
+date: today
+date-format: "DD MMMM YYYY"
+
+lang: en
+title-block-banner: true
+title-block-style: default
+
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: darkly
+    # theme: superhero         # Bootstrap
+    css: styles.css
+    toc: true
+    toc-title: Table of Contents
+    toc-depth: 7
+    toc-location: left
+    toc-expand: 2
+    number-sections: true
+    number-depth: 7
+    page-layout: full
+    smooth-scroll: true
+    anchor-sections: true
+    section-divs: true
+    code-fold: true
+    code-summary: "Show code"
+    code-tools: true
+    code-copy: hover
+    code-overflow: wrap
+    code-block-bg: true
+    code-block-border-left: "#31BAE9"
+    highlight-style: github
+    embed-resources: true
+    fig-responsive: true
+    fig-format: retina
+    fig-align: center
+    fig-dpi: 300
+    df-print: paged
+    other-links:
+      - text: Thomas's PPT
+        icon: filetype-ppt
+        href: ../00_context/PPT_Thomas_BCL6_09012026.pdf 
+    
+execute:
+  echo: true
+  warning: false
+  message: false
+  error: false
+  # cache: true
+  freeze: auto
+  eval: true
+
+editor: visual
+---
+
+```{r Setup, echo=FALSE}
+############
+# PACKAGES #
+############
+
+# BiocManager::install("SingleCellExperiment")
+# install.packages("devtools")
+# BiocManager::install("DropletUtils")
+# devtools::install_github("immunogenomics/presto")
+# BiocManager::install("scDblFinder")
+
+library(DropletUtils)
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(qs)
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(clustree)
+library(harmony)
+library(patchwork)
+library(dplyr)
+library(ggridges)
+library(readr)
+library(knitr)
+library(kableExtra)
+library(SingleR)
+library(celldex)
+library(ComplexHeatmap)
+library(circlize)
+library(presto)
+library(tidyverse)
+library(tibble)
+library(matrixStats)
+library(viridis)
+library(scuttle)
+library(scDblFinder)
+library(ggbeeswarm)
+library(here)
+library(scales)
+library(Polychrome)
+library(future)
+library(glmGamPoi)
+library(lisi)
+library(pheatmap)
+library(cluster)
+library(ggrepel)
+library(rstatix)
+library(ggpubr)
+library(pals)
+library(IRanges)
+library(sp)
+library(SummarizedExperiment)
+library(furrr)
+library(fgsea)
+library(msigdbr)
+library(Seurat)
+library(edgeR)
+library(gt)
+library(DT)
+
+###########
+# OPTIONS #
+###########
+
+options(
+  stringsAsFactors = FALSE,
+  scipen = 999
+)
+
+options(future.globals.maxSize = 4 * 1024^3)  # 4 Go
+
+plan(sequential)
+
+#########
+# PATHS #
+#########
+
+here::i_am("04_report/HD_vs_MM_scRNAseq_CD4_Tcells_analysis.qmd")
+# here::i_am("02_script/HD_vs_MM_scRNAseq_reanalysis.qmd")
+
+# knitr::opts_knit$set(
+#   root.dir = "~/Documents/Project/Thomas/20260116_scRNAseq_HD_MM_reanalysis")
+
+seurat_path_Tcell_obj <- "/mnt/crct-share/crct13/PPA/PPA_work/project/01_HCvsMM/01A_HCvsMM_10x/results/Tcells_analysis/seurat_objects/QCed_seurat_Tcells_clean.qs"
+
+# DIR_RAW    <- here("01_raw")
+DIR_DATA   <- here("01_data")
+# DIR_PROCESSED_DATA <- here("02_processed_data")
+DIR_SCRIPT <- here("02_script")
+DIR_RESULT <- here("03_result")
+DIR_REPORT <- here("04_report")
+DIR_ENV <- here("05_environment")
+DIR_LOG <- here("06_log")
+# DIR_QC     <- here("03_result", "QC")
+
+dir.create(here(DIR_DATA, "Processed_data"),
+           recursive = TRUE, 
+           showWarnings = FALSE)
+
+
+
+##########
+# COLORS #
+##########
+
+colors_30 <- c(
+  "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",
+  "#A65628", "#F781BF", "#999999", "#66C2A5", "#FC8D62",
+  "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494",
+  "#B3B3B3", "#1B9E77", "#D95F02", "#7570B3", "#E7298A",
+  "#66A61E", "#E6AB02", "#A6761D", "#666666", "#8DD3C7",
+  "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69"
+)
+colors_55 <- c(
+  "#E41A1C","#377EB8","#4DAF4A","#984EA3","#FF7F00",
+  "#A65628","#F781BF","#999999","#66C2A5","#FC8D62",
+  "#8DA0CB","#E78AC3","#A6D854","#FFD92F","#E5C494",
+  "#1B9E77","#D95F02","#7570B3","#E7298A","#66A61E",
+  "#E6AB02","#A6761D","#666666","#8DD3C7","#BEBADA",
+  "#FB8072","#80B1D3","#FDB462","#B3DE69","#FCCDE5",
+  "#D9D9D9","#BC80BD","#CCEBC5","#FFED6F","#1F78B4",
+  "#33A02C","#FB9A99","#E31A1C","#FDBF6F","#CAB2D6",
+  "#6A3D9A","#FFFF99","#B15928","#8E0152","#DE77AE",
+  "#7FBC41","#4EB265","#4393C3","#2166AC","#B2182B",
+  "#F4A582","#92C5DE","#FDDBC7","#D1E5F0","#542788"
+)
+
+# 22 col palette
+pal <-c('#e6194B', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#9A6324', '#469990', '#dcbeff', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1', '#000075', '#a9a9a9', '#ffffff', '#000000')
+
+Glasbey = glasbey.colors(32)
+# swatch(Glasbey)
+
+
+# Define batch variable, if modalities in batch var are <= 22 use pal, if < 30 use colors_30, otherwise use colors_55
+batch_var <- "emulsion"
+num_batches <- 42 # replace with actual number of batches in your dataset
+if (num_batches <= 22) {
+  pal <- pal
+} else if (num_batches <= 30) {
+  pal <- colors_30
+} else {
+  pal <- colors_55
+}
+  
+
+log_time <- format(Sys.time(), "%Y%m%d_%H%M%S")
+
+
+
+
+# --- Sanity check ---
+cat("Project root:", here(), "\n")
+```
+
+<br>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
+
+# Load Tcells {.tabset}
+
+## Load raw data
+
+If not already available in memory, the T cell was loaded for analysis.
+
+```{r Load raw data}
+# Load qs object
+seu <- qread(seurat_path_Tcell_obj)
+```
+
+## Save a copy of the raw data {.tabset}
+
+```{r Save raw data}
+# Save qs object
+qs::qsave(
+  seu,
+  file = file.path(
+    DIR_DATA,
+    "Processed_data",
+    "01_hd_mm_scrnaseq_tcell_raw_seurat.qs")
+)
+```
+
+## Statistics and object size {.tabset}
+
+```{r Statistic object}
+# Get statistic from this object
+size_table <- tibble(
+  Slot = c("Total object", "RNA assay", "ADT assay",
+           "Metadata", "RNA@data", "RNA@counts", "RNA@scale.data"),
+  Size_GB = c(
+    object.size(seu),
+    object.size(seu@assays$RNA),
+    object.size(seu@assays$ADT),
+    object.size(seu@meta.data),
+    object.size(seu@assays$RNA@data),
+    object.size(seu@assays$RNA@counts),
+    object.size(seu@assays$RNA@scale.data)
+  )
+) %>%
+  mutate(Size_GB = format(Size_GB, units = "GB"))
+
+size_table
+
+sizes <- list(
+  cells        = length(Cells(seu)),
+  object       = format(object.size(seu), units = "GB"),
+  RNA_assay    = format(object.size(seu@assays$RNA), units = "GB"),
+  ADT_assay    = format(object.size(seu@assays$ADT), units = "GB"),
+  metadata     = format(object.size(seu@meta.data), units = "GB"),
+  RNA_data     = format(object.size(seu@assays$RNA@data), units = "GB"),
+  RNA_counts   = format(object.size(seu@assays$RNA@counts), units = "GB"),
+  RNA_scale    = format(object.size(seu@assays$RNA@scale.data), units = "GB")
+)
+
+cat(sprintf(
+"Dataset summary
+----------------
+Number of T cells : %s
+Total object size : %s
+
+Assay sizes:
+- RNA assay       : %s
+- ADT assay       : %s
+- Metadata        : %s
+- RNA@data        : %s
+- RNA@counts      : %s
+- RNA@scale.data  : %s
+",
+sizes$cells,
+sizes$object,
+sizes$RNA_assay,
+sizes$ADT_assay,
+sizes$metadata,
+sizes$RNA_data,
+sizes$RNA_counts,
+sizes$RNA_scale
+))
+
+DefaultAssay(seu) <- "RNA"
+seu[["RNA"]]@scale.data <- matrix(0, 0, 0)  # supprime l’ancien scaled data
+invisible(gc())  # force garbage collection pour libérer la RAM
+```
+
+## Quick processing
+
+```{r Quick processing}
+seu <- seu %>%
+  NormalizeData() %>%
+  FindVariableFeatures() %>%
+  ScaleData(features = rownames(seu)) %>%
+  RunPCA(features = VariableFeatures(.)) %>%
+  RunUMAP(dims = 1:20)
+
+# --- Cleanup: remove scale.data to save memory ---
+DefaultAssay(seu) <- "RNA"
+seu[["RNA"]]@scale.data <- matrix(0, 0, 0)  # removes scaled data
+invisible(gc())  # forces garbage collection to free RAM
+
+qs::qsave(
+  seu,
+  file = file.path(
+    DIR_DATA,
+    "Processed_data",
+    "02_hd_mm_scrnaseq_tcell_quick_processed_seurat.qs")
+)
+```
+
+<br>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
+
+# QC {.tabset}
+
+## Strategy {.tabset}
+
+### Pre-filtering Metrics Assessment {.tabset}
+
+For each QC metric, two batch-aware annotations should be added to the metadata (computed per emulsion):
+
+-   `isOutlier_metric`: logical classification obtained from `isOutlier()`. A categorical variable (*low*, *normal*, *high*) based on ±3×MAD from the batch-specific median.
+-   `??? An other technic` Maybe try to add a second annotation to have a continuous measure of how much a cell is an outlier for a given metric.
+
+This design separates **metric computation**, **annotation**, and **filtering**, ensuring reproducibility and flexible downstream thresholding.
+
+::: callout-important
+All QC metrics and outlier detection procedures must be computed on the **raw counts matrix (`counts` slot)** !
+
+Performing QC on normalized or scaled data introduces bias and invalidates threshold interpretation.
+:::
+
+### Outlier Detection Method
+
+Outlier identification relies on the `isOutlier()` function from the scuttle package. This approach:
+
+-   Uses robust statistics (median and MAD)
+-   Accounts for distributional asymmetry
+-   Allows batch-wise evaluation
+
+This is statistically more reliable than applying a single global ±3×MAD cutoff across the entire dataset.
+
+::: callout-tip
+Always perform outlier detection **per technical batch (emulsion)** to control for batch-driven variability. Global thresholds can remove biologically valid cells from lower-depth or distinct batches !!!
+:::
+
+### Global QC Strategies
+
+#### Stringent QC
+
+Remove cells identified as outliers (by ≥1 method) for **at least one QC metric**.
+
+#### Non-stringent QC
+
+Remove cells identified as outliers by **both methods across all selected metrics**, or across a predefined subset of *critical metrics*.
+
+::: callout-caution
+QC stringency should be driven by biologically and technically critical metrics (e.g., library size, number of detected genes, mitochondrial proportion). Applying strict filtering uniformly across all computed metrics may result in excessive cell loss.
+:::
+
+### Recommended Workflow Structure
+
+1.  Compute metrics from `counts`
+2.  Annotate metadata with batch-specific outlier labels
+3.  Define per-metric stringency
+4.  Define global QC logic
+5.  Apply filtering in a single, transparent subsetting step
+
+This approach ensures interpretability, reproducibility, and precise control over QC stringency across batches.
+
+## Pre-filtering QC {.tabset}
+
+```{r Copy pre-QC object}
+# Create a copy of the pre-QC object to work on and save QC updates on this object
+qsave(
+  seu,
+  file = file.path(
+    DIR_DATA,
+    "Processed_data",
+    "03_hd_mm_scrnaseq_tcell_qc_seurat.qs")
+)
+```
+
+### Cells count {.tabset}
+
+```{r QC Cell count}
+log_dir <- file.path(DIR_LOG, "qc", "cell_count")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "cell_count", "qc_cell_count.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "Before_QC"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "cell_count", paste0("output_qc_cell_count_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "cell_count", paste0("error_qc_cell_count_", log_time, ".log"))
+)
+```
+
+```{r display_plots Cell count Viz, echo=FALSE, out.width = "800px"}
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Cell_Counts", "Before_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(include_graphics(img, auto_pdf = TRUE, dpi = 150))
+
+}
+```
+
+Apparently, there is also an emulsion T23491m_NK with no cells but it is not a Tcell but an NK cell. We will remove it from the dataset to avoid any bias in our analysis.
+
+```{r Remove patients id "T23491m_NK"}
+seu <- 
+  qread(file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs")) %>% 
+  subset(subset = emulsion != "T23491m_NK") # Remove the patient id "T23491m_NK" which is not a CD8 Tcell but an NK cell (based on the annotation and the expression of CD8a and CD8b)
+  
+qsave(
+  seu,
+  file = file.path(
+    DIR_DATA,
+    "Processed_data",
+    "03_hd_mm_scrnaseq_tcell_qc_seurat.qs")
+)
+```
+
+### Mitochondria {.tabset}
+
+We will now look at the distribution of the percentage of mitochondrial genes expression to see if there are some cells with high mitochondrial content that could be removed.
+
+```{r QC_mito, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "mitochondria")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "mitochondria", "qc_mitochondria.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "Before_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "mitochondria", paste0("output_qc_mitochondria_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "mitochondria", paste0("error_qc_mitochondria_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots 2, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+library(knitr)
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Mitochondria", "Before_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Ribosomes {.tabset}
+
+We will now look at the distribution of the percentage of ribosomal genes expression to see if there are some cells with high or low ribosomal content that should be removed.
+
+```{r QC_ribo, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "ribosome")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "ribosome", "qc_ribosome.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "Before_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "ribosome", paste0("output_qc_ribosome_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "ribosome", paste0("error_qc_ribosome_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots 3, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Ribosomal", "Before_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Library size (nCountRNA) {.tabset}
+
+```{r QC_lib_size, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "library_size")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "library_size", "qc_library_size.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "Before_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "library_size", paste0("output_qc_library_size_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "library_size", paste0("error_qc_library_size_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots Lib_size, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Library_Size", "Before_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Library diversity/heterogeneity (nFeatureRNA) {.tabset}
+
+```{r QC_lib_div, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "library_diversity")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "library_diversity", "qc_library_diversity.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "Before_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "library_diversity", paste0("output_qc_library_diversity_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "library_diversity", paste0("error_qc_library_diversity_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots Lib_div, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Library_Diversity", "Before_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Librairy complexity {.tabset}
+
+```{r QC_lib_complex, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "library_complexity")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "library_complexity", "qc_library_complexity.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "Before_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "library_complexity", paste0("output_qc_library_complexity_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "library_complexity", paste0("error_qc_library_complexity_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots Lib_complex, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Library_Complexity", "Before_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Cell Cycle Scoring {.tabset}
+
+```{r QC_cell_cycle, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "cell_cycle")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "cell_cycle", "qc_cell_cycle.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "Before_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "cell_cycle", paste0("output_qc_cell_cycle_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "cell_cycle", paste0("error_qc_cell_cycle_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots Cell cycle, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Cell_Cycle", "Before_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+Later, see if clusters are enriched in specific cell cycle phases.
+
+## Filtering {.tabset}
+
+```{r Load pre-QC object for filtering}
+# Load qs object
+seu <- qread(file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"))
+```
+
+
+We have look at several QC metrics we will now set a cutoff for those to eliminate bad quality cells from our dataset. We have flag each cells for each QC metric based on the distribution of the data and the visualizations we have done. We have then create a new column in the metadata to indicate whether each cell passes or fails the QC criteria based on these cutoffs. Finally, we will subset the Seurat object to keep only the cells that pass QC for downstream analysis.
+
+::: callout-tip
+There are several way to set cutoff... we can do this the easy way… or the hard way ! It’s your choice.
+
+-   Stringent QC will remove all cells that fail at least one QC metric (mito, ribo, libsize, libdiv, libcomplex)
+
+-   Non stringent QC will remove only cells that fail all QC metrics (mito, ribo, libsize, libdiv, libcomplex)
+
+    -   Often all cells pass QC so this is not really a good option
+
+-   Moderate QC will remove cells that fail at least 2 (or 3) QC metrics (mito, ribo, libsize, libdiv, libcomplex) according what we thing it's the best compromise between stringency and cell retention.
+:::
+
+For Stringent QC :
+
+```{r QC Cutoff Stringent QC}
+seu@meta.data$Stringent_QC_status <- dplyr::case_when(
+  # seu$DblFinder_class == "doublet" ~ "fail_doublet",
+  (seu$mito_status == "high" | seu$libsize_status == "low" | seu$libdiv_status == "low" | seu$libcomplex_status == "low") ~ "fail",
+  TRUE ~ "pass"
+)
+
+# Number of cells that fail QC
+table(seu@meta.data$Stringent_QC_status)
+
+# Add percentage of cells that fail QC for each emulsion and globally
+
+```
+
+On 87548 Tcells, 1737 cells fail the stringent QC (2% of cells).
+
+For Non Stringent QC :
+
+```{r QC Cutoff Non Stringent QC}
+seu@meta.data$Non_stringent_QC_status <- dplyr::case_when(
+  # seu$DblFinder_class == "doublet" ~ "fail_doublet",
+  (seu$mito_status == "high" & seu$libsize_status == "low" & seu$libdiv_status == "low" & seu$libcomplex_status == "low") ~ "fail",
+  TRUE ~ "pass"
+)
+
+# Number of cells that fail QC
+table(seu@meta.data$Non_stringent_QC_status)
+```
+
+On 87548 Tcells, 87548 cells fail the non stringent QC (0% of cells).
+
+::: callout-warning
+This QC is not really good because it does not remove any cell from the dataset, even if some cells fail one or more QC metrics. It can be useful to keep all cells for some analysis, but it can also introduce noise and bias in the downstream analysis if we have a lot of low-quality cells in the dataset.
+:::
+
+I have chose the moderate QC for the downstream analysis.
+
+For Moderate QC :
+
+```{r QC Cutoff Moderate QC}
+seu@meta.data$Moderate_QC_status <- dplyr::case_when(
+  # seu$DblFinder_class == "doublet" ~ "fail_doublet",
+  (seu$mito_status == "high" | (seu$ribo_status == 'high' & seu$libsize_status == "low" & seu$libdiv_status == "low" & seu$libcomplex_status == "low")) ~ "fail",
+  TRUE ~ "pass"
+)
+
+# Number of cells that fail QC
+table(seu@meta.data$Moderate_QC_status)
+```
+
+With Moderate QC we have 1570 cells that failed QC and the rest pass. Hence, we retain 85978 cells for downstream analysis, which represent ~98% of the original dataset. This QC is a good compromise between stringency and cell retention, as it removes cells that fail at least 2 QC metrics (mito high and libcomplex low) while keeping the majority of cells in the dataset.
+
+We subset dataset to keep only cells that pass QC for downstream analysis.
+
+```{r QC_cutoff, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "filter")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "qc_filter.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-d", "CD4_Tcells",
+    "-n", "Moderate_QC",
+    "-r", "mito_status == 'high' | (ribo_status == 'high' & libsize_status == 'low' & libdiv_status == 'low' & libcomplex_status == 'low')",
+    "-b", TRUE,
+    "-s", TRUE
+  ),
+  stdout = file.path(DIR_LOG, "qc", "filter", paste0("output_qc_filter_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "filter", paste0("error_qc_filter_", log_time, ".log"))
+)
+
+```
+
+------------------------------------------------------------------------
+
+## Post-filtering QC {.tabset}
+
+### Cells count {.tabset}
+
+```{r QC Cell count after filtering}
+log_dir <- file.path(DIR_LOG, "qc", "cell_count")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "cell_count", "qc_cell_count.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "After_QC"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "cell_count", paste0("output_qc_cell_count_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "cell_count", paste0("error_qc_cell_count_", log_time, ".log"))
+)
+```
+
+```{r display_plots Cell count Viz after filtering, echo=FALSE, out.width = "800px"}
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Cell_Counts", "After_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(include_graphics(img, auto_pdf = TRUE, dpi = 150))
+
+}
+```
+
+### Mitochondria {.tabset}
+
+We will now look at the distribution of the percentage of mitochondrial genes expression to see if there are some cells with high mitochondrial content that could be removed.
+
+```{r QC_mito after filtering, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "mitochondria")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "mitochondria", "qc_mitochondria.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "After_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "mitochondria", paste0("output_qc_mitochondria_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "mitochondria", paste0("error_qc_mitochondria_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots 2 after filtering, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+library(knitr)
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Mitochondria", "After_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Ribosomes {.tabset}
+
+```{r QC_ribo after filtering, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "ribosome")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "ribosome", "qc_ribosome.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "After_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "ribosome", paste0("output_qc_ribosome_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "ribosome", paste0("error_qc_ribosome_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots 3 after filtering, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Ribosomal", "After_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Library size (nCountRNA) {.tabset}
+
+```{r QC_lib_size after filtering, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "library_size")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "library_size", "qc_library_size.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "After_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "library_size", paste0("output_qc_library_size_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "library_size", paste0("error_qc_library_size_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots Lib_size after filtering, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Library_Size", "After_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Library diversity/heterogeneity (nFeatureRNA) {.tabset}
+
+```{r QC_lib_div after filtering, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "library_diversity")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "library_diversity", "qc_library_diversity.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "After_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "library_diversity", paste0("output_qc_library_diversity_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "library_diversity", paste0("error_qc_library_diversity_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots Lib_div after filtering, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Library_Diversity", "After_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Librairy complexity {.tabset}
+
+```{r QC_lib_complex after filtering, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "library_complexity")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "library_complexity", "qc_library_complexity.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "After_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "library_complexity", paste0("output_qc_library_complexity_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "library_complexity", paste0("error_qc_library_complexity_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots Lib_complex after filtering, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Library_Complexity", "After_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+### Cell Cycle Scoring {.tabset}
+
+```{r QC_cell_cycle after filtering, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "cell_cycle")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "cell_cycle", "qc_cell_cycle.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-q", "After_QC",
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "cell_cycle", paste0("output_qc_cell_cycle_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "cell_cycle", paste0("error_qc_cell_cycle_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots Cell cycle after filtering, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Cell_Cycle", "After_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+
+### Doublet detection {.tabset}
+
+```{r QC_cell_cycle after filtering, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "qc", "doublet")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "qc", "doublet", "qc_doublet.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-s", "TRUE"
+  ),
+  stdout = file.path(DIR_LOG, "qc", "doublet", paste0("output_qc_cell_cycle_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "qc", "doublet", paste0("error_qc_cell_cycle_", log_time, ".log"))
+)
+
+```
+
+```{r display_plots Cell cycle before filtering, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Doublet", "Before_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+```{r display_plots Cell cycle after filtering, echo=FALSE, out.width = "800px"}
+
+# Affichage automatique des plots
+
+img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Doublet", "After_QC")
+
+img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
+
+for (img in img_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
+
+# Normalization {.tabset}
+
+## RNA matrix {.tabset}
+
+```{r Normalize RNA}
+DefaultAssay(seu) <- "RNA"
+seu <- NormalizeData(seu, assay = "RNA")
+```
+
+## ADT matrix {.tabset}
+
+```{r Normalize ADT}
+DefaultAssay(seu) <- "ADT"
+seu <- NormalizeData(seu, normalization.method = "CLR", margin = 2, assay = "ADT")
+```
+
+# Most Variable Features {.tabset}
+
+## RNA matrix {.tabset}
+
+```{r MVP RNA}
+DefaultAssay(seu) <- "RNA"
+seu <- FindVariableFeatures(seu, assay = "RNA")
+```
+
+## ADT matrix {.tabset}
+
+```{r MVP ADT}
+DefaultAssay(seu) <- "ADT"
+VariableFeatures(seu) <- rownames(seu[["ADT"]])
+```
+
+# Scaling {.tabset}
+
+## RNA matrix {.tabset}
+
+```{r Scale RNA}
+DefaultAssay(seu) <- "RNA"
+seu <- ScaleData(seu, 
+                 assay = "RNA",
+                 vars.to.regress = c("nCount_RNA", "percent.mt"),
+                 features = VariableFeatures(seu))
+```
+
+## ADT matrix {.tabset}
+
+```{r Scale ADT}
+DefaultAssay(seu) <- "ADT"
+seu <- ScaleData(seu, assay = "ADT")
+```
+
+# PCA {.tabset}
+
+## RNA matrix {.tabset}
+
+```{r PCA RNA}
+DefaultAssay(seu) <- "RNA"
+seu <- RunPCA(seu, reduction.name = "pca")
+p_elbow_PCA_RNA <- ElbowPlot(seu, ndims = 50, reduction = "pca")
+
+
+dir.create(
+  file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "PCA"),
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+ggsave(
+  plot = p_elbow_PCA_RNA,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "PCA",
+    "RNA_PCA_elbowplot.png"),
+  width = 12,
+  height = 6,
+  dpi = 300)
+```
+
+## ADT matrix {.tabset}
+
+```{r PCA ADT}
+DefaultAssay(seu) <- "ADT"
+seu <- RunPCA(seu, reduction.name = "apca")
+p_Elbow_PCA_ADT <- ElbowPlot(seu, ndims = 13, reduction = "apca")
+
+ggsave(
+  plot = p_Elbow_PCA_ADT,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "PCA",
+    "ADT_PCA_elbowplot.png"),
+  width = 12,
+  height = 6,
+  dpi = 300)
+```
+
+# Batch correction (Harmony) {.tabset}
+
+## RNA matrix {.tabset}
+
+```{r Harmony RNA}
+DefaultAssay(seu) <- "RNA"
+#batch correction with Harmony (RNA)
+seu <- RunHarmony(seu, 
+                  group.by.vars = "id", 
+                  plot_convergence = TRUE)
+
+# Save convergence plot
+dir.create(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "Convergence_Plot"),
+  showWarnings = FALSE
+)
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "Convergence_Plot",
+    "RNA_Harmony_convergence_plot.png"),
+  width = 8,
+  height = 6,
+  dpi = 300
+)
+```
+
+# Weighted Nearest Neighbor (WNN) graph {.tabset}
+
+```{r WNN}
+seu <- FindMultiModalNeighbors(seu,
+                               reduction.list = list("harmony", "apca"),
+                               dims.list = list(1:9, 1:13))
+```
+
+# UMAP {.tabset}
+
+## Tuning {.tabset}
+
+```{r Tuning UMAP}
+# Dir  to save
+dir.create(
+  file.path(DIR_RESULT,
+            "All_Tcells",
+            "UMAP",
+            "Tuning"),
+  recursive = TRUE,
+  showWarnings = FALSE)
+
+params <- expand.grid(
+  n.neighbors = c(40),
+  min.dist    = c(0.04, 0.05, 0.06, 0.07, 0.08, 0.09),
+  spread      = c(1.5, 2)
+)
+
+for (i in seq_len(nrow(params))) {
+
+  md <- params$min.dist[i]
+  sp <- params$spread[i]
+  nn <- params$n.neighbors[i]
+
+  red_name <- paste0("umap_md", md, "_sp", sp, "_nn", nn)
+
+  seu <- RunUMAP(
+    seu,
+    nn.name     = "weighted.nn",
+    min.dist    = md,
+    spread      = sp,
+    n.neighbors = nn,
+    seed.use    = 42,
+    reduction.name = red_name
+  )
+
+  p <- DimPlot(
+    seu,
+    reduction = red_name,
+    group.by  = "predicted.celltype.l2") +
+    ggtitle(paste("min.dist =", md,
+                  "spread =", sp,
+                  "n.neighbors =", nn)) +
+    scale_color_manual(values = pal)
+
+  ggsave(
+    plot = p,
+    filename = file.path(
+      DIR_RESULT,
+      "All_Tcells",
+      "UMAP",
+      "Tuning",
+      paste0(red_name, ".png")
+    ),
+    width = 12,
+    height = 6
+  )
+}
+
+```
+
+## Run {.tabset}
+
+```{r Run UMAP}
+seu <- RunUMAP(seu,
+               nn.name = "weighted.nn",
+               min.dist = 0.06,
+               spread = 1.0,
+               n.neighbors = 50,
+               seed.use = 42)
+```
+
+## Visualization {.tabset}
+
+```{r Viz UMAP}
+# Visualization
+metadata <- c("condition", "source", "id", "predicted.celltype.l1", "predicted.celltype.l2", "predicted.celltype.l3")
+
+
+dir.create(
+  file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "UMAP",
+    "Metadata"),
+  recursive = TRUE,
+  showWarnings = FALSE)
+
+for (meta in metadata) {
+  p <- DimPlot(seu, reduction = "umap", group.by = meta) + ggtitle(meta)
+  
+  print(p)
+  
+  # Nom de fichier
+  file_name <- paste0(output_dir, "/UMAP_metadata_", meta, ".png")
+
+  ggsave(file_name, plot = p, width = 6, height = 5)
+  
+  ggsave(
+    filename = file.path(
+      DIR_RESULT,
+      "All_Tcells",
+      "UMAP",
+      "Metadata",
+      paste0("UMAP_metadata_", meta, ".pdf")
+    ),
+    plot = p,
+    width = 6,
+    height = 5
+  )
+}
+```
+
+# Clustering {.tabset}
+
+## Test several clustering resolutions {.tabset}
+
+```{r FindClusters}
+# # Clustering (commun RNA + ADT on WNN graph)
+# Explore different resolutions
+resolutions <- seq(0.01, 0.1, by = 0.01)
+for (res in resolutions) {
+  seu <- FindClusters(seu, graph.name = "wsnn", resolution = res, verbose = FALSE)
+}
+```
+
+## Visualization {.tabset}
+
+```{r Viz clusters (Clustree)}
+clustree(seu, prefix = "wsnn_res.")
+
+dir.create(
+  file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering"),
+  recursive = TRUE,
+  showWarnings = FALSE)
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering",
+    "Clustree_WNN.pdf"),
+  width = 10,
+  height = 8
+)
+```
+
+## Optimal resolution {.tabset}
+
+```{r Choose opti res}
+# Choose resolution 0.06
+seu$seurat_clusters <- seu$wsnn_res.0.1
+
+# Reorganize clusters names
+seu$seurat_clusters <- factor(seu$seurat_clusters, 
+                              levels = names(sort(table(seu$seurat_clusters), 
+                                                  decreasing = TRUE)))
+```
+
+## Clusters on UMAP {.tabset}
+
+```{r Clusters on UMAP}
+DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat_clusters")
+
+# Save the plot
+ggsave(
+  plot = last_plot(),
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering",
+    "UMAP_seurat_clusters.pdf"),
+  width = 12,
+  height = 6)
+
+ggsave(
+  plot = last_plot(),
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "UMAP",
+    "Metadata",
+    "UMAP_seurat_clusters.pdf"),
+  width = 12,
+  height = 6)
+
+DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat clusters") +
+  facet_wrap(~seurat_clusters)
+
+ggsave(
+     plot = last_plot(),
+     filename = file.path(
+       DIR_RESULT,
+       "All_Tcells",
+       "Clustering",
+       "UMAP_seurat_clusters_facet.pdf"),
+     width = 12,
+     height = 6)
+
+ggsave(
+  plot = last_plot(),
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "UMAP",
+    "Metadata",
+    "UMAP_seurat_clusters_facet.pdf"),
+  width = 12,
+  height = 6)
+```
+
+#### UMAP density per cluster {.tabset}
+
+```{r UMAP density per cluster}
+### UMAP density
+
+df <- as.data.frame(
+  Embeddings(seu_CD8_QC_Moderate, "umap")
+)
+
+colnames(df) <- c("UMAP_1", "UMAP_2")
+
+# Ajouter metadata utile
+df$condition    <- seu_CD8_QC_Moderate$condition
+df$BCL6_status  <- seu_CD8_QC_Moderate$BCL6_status
+df$seurat_cluster <- seu_CD8_QC_Moderate$seurat_clusters
+
+
+p_umap_density_clusters <- ggplot(df, aes(UMAP_1, UMAP_2)) +
+  # Points colorés par cluster
+  geom_point(
+    aes(color = seurat_cluster),
+    size = 0.5,
+    alpha = 0.6
+  ) +
+  scale_colour_manual(values = pal) +
+  
+  # Contours en arrière-plan (structure globale)
+  stat_density_2d(
+    bins = 14,
+    contour_var = "density",
+    color = "black",
+    linewidth = 0.2,
+    h = c(0.8, 0.8)
+  ) +
+  
+  coord_equal() +
+  labs(title = "UMAP density plot of CD8 T cells",
+       x = "UMAP 1",
+       y = "UMAP 2",
+       color = "Cluster") +
+  
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_text(angle = 45, hjust = 1),
+    legend.title = element_text(size = 14, face = "bold"),    # taille + gras du titre
+    legend.text  = element_text(size = 12)
+  ) +
+  
+  # Agrandir les points dans la légende
+  guides(color = guide_legend(
+    override.aes = list(size = 4)  # taille des symboles dans la légende
+  ))
+p_umap_density_clusters
+
+ggsave(
+  plot = p_umap_density_clusters,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering",
+    "UMAP_seurat_clusters_density.png"),
+  width = 12,
+  height = 6)
+
+ggsave(
+  plot = p_umap_density_clusters,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "UMAP",
+    "Metadata",
+    "UMAP_seurat_clusters_density.pdf"),
+  width = 12,
+  height = 6)
+```
+
+## Clusters quality {.tabset}
+
+### QC metrics per cluster {.tabset}
+
+```{r QC metrics per clusters}
+VlnPlot(
+  seu,
+  features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
+  group.by = "seurat_clusters",
+  pt.size = 0,
+  ncol = 3
+)
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering",
+    "Clusters_QC_metrics.pdf"),
+  width = 12,
+  height = 6)
+```
+
+nCount_RNA: Library size
+
+nFeature_RNA: Library complexity
+
+percent.mt: Mitochondrial content
+
+### Libraries size per cluster {.tabset}
+
+```{r Libsize per clusters}
+# Plot number of cells per cluster with percentage labels of total cells
+cell_counts <- seu@meta.data %>%
+  count(seurat_clusters, name = "Cell_Count") %>%
+  mutate(
+    Percentage = round(100 * Cell_Count / sum(Cell_Count), 6),
+    label = paste0(Percentage, "%")
+  )
+
+
+ggplot(cell_counts, aes(y = seurat_clusters, x = Cell_Count, fill = seurat_clusters)) +
+  geom_col() +
+  geom_text(aes(label = label), hjust = -0.1, size = 3) +
+  theme_minimal() +
+  labs(
+    title = "Number (and %) of cells per cluster",
+    x = "Number of cells",
+    y = "Cluster"
+  ) +
+  theme(legend.position = "none")
+
+# Save the plot
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering",
+    "Clusters_cell_counts.pdf"),
+  width = 8,
+  height = 6
+)
+```
+
+## Cluster repartition per patients {.tabset}
+
+```{r Clusters repartition per patients}
+# Proportion of cells per cluster for each patient
+cluster_patient <- seu@meta.data %>%
+  group_by(id, seurat_clusters) %>%
+  summarise(Cell_Count = n()) %>%
+  group_by(id) %>%
+  mutate(Percentage = Cell_Count / sum(Cell_Count) * 100)
+
+ggplot(cluster_patient, aes(x = id, y = Percentage, fill = seurat_clusters)) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Proportion of cells per cluster for each patient",
+    x = "Patient ID",
+    y = "Proportion of cells",
+    fill = "Cluster"
+  ) + 
+  theme(
+      axis.text.x = element_text(angle = 45, 
+                                 hjust = 1, 
+                                 vjust = 1))
+
+# Save the plot
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering",
+    "Clusters_repartition_per_patient.pdf"),
+  width = 12,
+  height = 6
+)
+```
+
+### Mitochondrial content per cluster {.tabset}
+
+```{r Mito per clusters}
+stats_mt <- seu@meta.data %>%
+  group_by(seurat_clusters) %>%
+  summarise(
+    mean_pct_mt   = mean(percent.mt),
+    median_pct_mt = median(percent.mt),
+    sd_pct_mt     = sd(percent.mt)
+  )
+
+kable(stats_mt, format = "html") %>%
+  kable_styling()
+
+# Save the table
+write.csv(stats_mt, 
+          file = file.path(
+            DIR_RESULT,
+            "All_Tcells",
+            "Clustering",
+            "cluster_mitochondrial_content_stats.csv"),
+          row.names = FALSE)
+```
+
+```{r Viz Mito per clusters}
+ggplot(seu@meta.data,
+       aes(
+         x = percent.mt,
+         y = seurat_clusters,
+         fill = seurat_clusters
+       )) +
+  geom_density_ridges(
+    alpha = 0.7,
+    scale = 1.2,
+    rel_min_height = 0.01,
+    color = "white") +
+  # theme_ridges() +
+  # theme(
+  #   legend.position = "none"
+  # ) +
+  # geom_vline(xintercept = 20, linetype = "dashed", color = "red") +
+  labs(
+    x = "% mitochondrial genes",
+    y = "Clusters")
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering",
+    "Clusters_mitochondrial_content_ridges.pdf"),
+  width = 12,
+  height = 6
+)
+```
+
+Too few cells in clusters 10 to be seen
+
+<!-- Mitcochondrial content on UMAP -->
+
+<!-- ```{r} -->
+
+<!-- FeaturePlot( -->
+
+<!--   seu, -->
+
+<!--   features = "percent.mt", -->
+
+<!--   cols = c("lightgrey", "red"), -->
+
+<!--   reduction = "umap") -->
+
+<!-- ``` -->
+
+## Remove bad clusters {.tabset}
+
+```{r Remove bad clusters}
+# Remove clusters 
+seu <- subset(seu, 
+              subset = !(seurat_clusters %in% c("8", "9","10")))
+
+seu$seurat_clusters <- factor(seu$seurat_clusters)
+
+```
+
+```{r UMAP without bad clusters}
+DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat clusters after removing bad clusters")
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "UMAP",
+    "Metadata",
+    "UMAP_seurat_clusters_after_removing_bad_clusters.pdf"),
+  width = 12,
+  height = 6
+) 
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering",
+    "UMAP_seurat_clusters_after_removing_bad_clusters.pdf"),
+  width = 12,
+  height = 6
+)
+
+DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat clusters after removing bad clusters") +
+  facet_wrap(~seurat_clusters, ncol = (length(unique(seu$seurat_clusters))/2) )
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "UMAP",
+    "Metadata",
+    "UMAP_seurat_clusters_after_removing_bad_clusters_facet.pdf"),
+  width = 12,
+  height = 6
+)
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Clustering",
+    "UMAP_seurat_clusters_after_removing_bad_clusters_facet.pdf"),
+  width = 12,
+  height = 6)
+```
+
+# Annotate clusters {.tabset}
+
+## FeaturePlot {.tabset}
+
+```{r FeaturePlot ADT}
+dict <- list(
+  "CD16-TotalSeqB" = "FCGR3A",
+  "CD335-NKp46-TotalSeqB" = "NCR1",
+  "CD197-CCR7-TotalSeqB" = "CCR7",
+  "CD4-TotalSeqB" = "CD4",
+  "CD8a-TotalSeqB" = "CD8A",
+  "CD45RA-TotalSeqB" = "PTPRC",
+  "CD62L-TotalSeqB" = "SELL",
+  "CD127-IL-7Ra-TotalSeqB" = "IL7R",
+  "CD25-TotalSeqB" = "IL2RA",
+  "TIGIT-VSTM3-TotalSeqB" = "TIGIT",
+  "CD226-DNAM-1-TotalSeqB" = "CD226",
+  "CD38-TotalSeqB" = "CD38"
+)
+
+dir.create(
+  file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "FeaturePlot",
+    "Prot_RNA_Clusters_FeaturePlot"),
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+for (prot in names(dict)) {
+  gene <- dict[[prot]]
+  
+  # ADT plot
+  DefaultAssay(seu) <- "ADT"
+  p1 <- FeaturePlot(seu, features = prot, reduction = "umap") + ggtitle(paste0(prot, " (ADT)"))
+  
+  # RNA plot
+  DefaultAssay(seu) <- "RNA"
+  # Vérifie que le gène existe dans RNA
+  if (gene %in% rownames(seu[["RNA"]])) {
+    p2 <- FeaturePlot(seu, features = gene, reduction = "umap") + ggtitle(paste0(gene, " (RNA)"))
+  } else {
+    p2 <- ggplot() + 
+      ggtitle(paste0(gene, " (RNA) - Not found")) + 
+      theme_void()
+  }
+  
+  p3 <- DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat_clusters")
+  
+  # Combine plots
+  p <- (p1 | p2) / p3
+  p
+
+
+  
+  # Sauvegarde
+  ggsave(
+    filename = file.path(
+      DIR_RESULT,
+      "All_Tcells",
+      "FeaturePlot",
+      "Prot_RNA_Clusters_FeaturePlot",
+      paste0("Prot_RNA_Clusters_FeaturePlot_", prot, "_", gene, "_featureplot.png")),
+    plot = p,
+    width = 12,
+    height = 12)
+}
+```
+
+# Clusters markers {.tabset}
+
+## Find all markers {.tabset}
+
+```{r FindAllMarkers}
+markers <- FindAllMarkers(seu, only.pos = TRUE, min.pct = 0.25)
+
+markers_filt <- markers %>%
+  filter(
+    p_val_adj < 0.05,
+    avg_log2FC > 0.5,
+    !grepl("^MT-|^RPL|^RPS", gene)
+  )
+```
+
+## Top 10 markers per cluster {.tabset}
+
+```{r Top10 markers}
+genes.scaled <- rownames(seu[["RNA"]]@scale.data)
+
+top10 <- markers_filt %>%
+  filter(gene %in% genes.scaled) %>%
+  group_by(cluster) %>%
+  slice_max(avg_log2FC, n = 10)
+
+top10 %>% arrange(cluster, desc(avg_log2FC))
+```
+
+##### FeaturePlot of top10 markers per cluster {.tabset}
+
+```{r All FeaturePlot Top10}
+dir.create(
+  file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "FeaturePlot",
+    "Top10_Markers_Per_Cluster"),
+  recursive = TRUE,
+  showWarnings = FALSE)
+
+for (i in unique(top10$cluster)) {
+  
+  dir.create(
+    file.path(
+      DIR_RESULT,
+      "All_Tcells",
+      "FeaturePlot",
+      "Top10_Markers_Per_Cluster",
+      paste0("Cluster_", i)),
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+
+  genes_cluster <- top10 %>%
+    filter(cluster == i) %>%
+    pull(gene)
+
+  p_list <- lapply(genes_cluster, function(gene) {
+    FeaturePlot(
+      seu,
+      features = gene, 
+      reduction = "umap") +
+      # scale_color_gradient(low = "lightgrey", high = "red") +
+      ggtitle(paste0("Cluster ", i, ": ", gene))
+  })
+
+  p_combined <- wrap_plots(p_list, ncol = 5)
+  p_combined
+  
+  ggsave(
+    filename = file.path(
+      DIR_RESULT,
+      "All_Tcells",
+      "FeaturePlot",
+      "Top10_Markers_Per_Cluster",
+      paste0("Cluster_", i),
+      paste0("Cluster_", i, "_Top10_Markers_featureplot.png")),
+    plot = p_combined,
+    width = 20,
+    height = 12)
+  
+  lapply(genes_cluster, function(gene) {
+    
+    dir.create(
+      file.path(
+        DIR_RESULT,
+        "All_Tcells",
+        "FeaturePlot",
+        "Top10_Markers_Per_Cluster",
+        paste0("Cluster_", i),
+        paste0("Gene_", gene)),
+      recursive = TRUE,
+      showWarnings = FALSE)
+      
+    violin <- VlnPlot(
+      seu, 
+      cols = pal,
+      features = gene, 
+      group.by = "seurat_clusters", 
+      pt.size = 0) +
+      ggtitle(paste0("Cluster ", i, ": ", gene))
+    violin
+      
+    ggsave(
+      plot = violin,
+      filename = file.path(
+        DIR_RESULT,
+        "All_Tcells",
+        "FeaturePlot",
+        "Top10_Markers_Per_Cluster",
+        paste0("Cluster_", i),
+        paste0("Gene_", gene),
+        paste0("Cluster_", i, "_", gene, "_VlnPlot.png")
+      ),
+      width = 6,
+      height = 4)
+      
+    feature <- FeaturePlot(
+      seu, 
+      features = gene, 
+      reduction = "umap") +
+      ggtitle(paste0("Cluster ", i, ": ", gene))
+    feature
+    
+    ggsave(
+      filename = file.path(
+        DIR_RESULT,
+        "All_Tcells",
+        "FeaturePlot",
+        "Top10_Markers_Per_Cluster",
+        paste0("Cluster_", i),
+        paste0("Gene_", gene),
+        paste0("Cluster_", i, "_", gene, "_FeaturePlot.png")
+      ),
+      plot = feature,
+      width = 6,
+      height = 5)
+      
+    p_cluster <- DimPlot(
+      seu, 
+      reduction = "umap", 
+      group.by = "seurat_clusters") +
+      scale_color_manual(values = pal)
+    p_cluster
+      
+    p_violin_feature_cluster <- (violin | feature) / p_cluster
+    p_violin_feature_cluster
+      
+    ggsave(
+      filename = file.path(
+        DIR_RESULT,
+        "All_Tcells",
+        "FeaturePlot",
+        "Top10_Markers_Per_Cluster",
+        paste0("Cluster_", i),
+        paste0("Gene_", gene),
+        paste0("Cluster_", i, "_", gene, "_Vln_Feature_Cluster.png")
+      ),
+      plot = p_violin_feature_cluster,
+      width = 12,
+      height = 10)
+  })
+}
+```
+
+## Heatmap of markers per cluster {.tabset}
+
+```{r Heatmap Top10}
+genes <- unique(top10$gene)
+
+# Extract scaled data for the selected genes
+mat <- GetAssayData(
+  seu,
+  assay = "RNA",
+  layer = "scale.data"
+)[genes, ]
+
+# Order cells by cluster
+clusters <- seu$seurat_clusters
+ord <- order(clusters)
+
+mat <- mat[, ord]
+clusters <- clusters[ord]
+
+# Create annotation for clusters
+cluster_ha <- HeatmapAnnotation(
+  Cluster = clusters,
+  col = list(
+    Cluster = structure(
+      Seurat::DiscretePalette(length(unique(clusters)), "polychrome"),
+      names = levels(clusters)
+    )
+  )
+)
+# Create heatmap
+heatmap <- Heatmap(
+  mat,
+  name = "Expression",
+  top_annotation = cluster_ha,
+  show_column_names = FALSE,
+  show_row_names = TRUE,
+  cluster_columns = FALSE,
+  cluster_rows = TRUE,
+  row_names_gp = grid::gpar(fontsize = 8),
+  column_title = "Top 10 markers per cluster"
+  )
+
+
+# Save heatmap
+dir.create(
+  file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Heatmap"),
+  recursive = TRUE,
+  showWarnings = FALSE)
+  
+draw(heatmap)
+png(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Heatmap",
+    "Top10_Markers_Per_Cluster_Heatmap.png"),
+  width = 1200,
+  height = 800
+)
+
+
+
+```
+
+# Automatic annotation (SingleR) {.tabset}
+
+## Make automatic predictions {.tabset}
+
+```{r Run auto annot (SingleR)}
+# Prepare SingleR input
+sce <- as.SingleCellExperiment(seu, assay = "RNA")
+
+# Reference dataset
+ref <- fetchReference("monaco_immune", "2024-02-26")
+
+# Run SingleR
+predictions <- SingleR(
+  test = sce,
+  ref = ref,
+  labels = ref$label.fine,
+  assay.type.test = "logcounts")
+
+# Add predictions to Seurat object
+seu$predicted.celltype.l3_jordan <- predictions$pruned.labels
+```
+
+### Visualization of automatic annotations {.tabset}
+
+```{r Viz auto Annot}
+
+dir.create(
+  file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Annotation",
+    "Automatic"),
+  recursive = TRUE,
+  showWarnings = FALSE)
+
+p1 <- DimPlot(seu, reduction = "umap", group.by = "predicted.celltype.l3_jordan") + ggtitle("predicted.celltype.l1")
+p1
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Annotation",
+    "Automatic",
+    "UMAP_predicted_celltype_JD.png"),
+  plot = p1,
+  width = 12,
+  height = 6
+)
+
+p2 <- DimPlot(seu, reduction = "umap", group.by = "predicted.celltype.l3_jordan") + ggtitle("predicted.celltype.l3_jordan") + 
+  facet_wrap(~predicted.celltype.l3_jordan, ncol = 6)
+p2
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Annotation",
+    "Automatic",
+    "UMAP_predicted_celltype_JD_facet.png"),
+  plot = p2,
+  width = 12,
+  height = 12
+)
+
+p3 <- p1 | p2
+p3
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Annotation",
+    "Automatic",
+    "UMAP_predicted_celltype_JD_combined.pdf"),
+  plot = p3,
+  width = 12,
+  height = 6
+)
+```
+
+# Manual annotation {.tabset}
+
+## Create my celltype signatures {.tabset}
+
+### Run presto to find markers {.tabset}
+
+```{r Run presto}
+expr_matrix <- as.matrix(seu@assays$RNA@data)
+labels <- seu$seurat_clusters
+
+presto_markers <- wilcoxauc(expr_matrix, labels)
+```
+
+### Construction of the signature table {.tabset}
+
+```{r Construct signature tibble}
+signature_tbl <- tribble(
+  ~feature, ~cell_type, ~class,
+  
+  # Activated
+  "CD69", "Activated", "State",
+  "TNFRSF9", "Activated", "State",
+  "IL2RA", "Activated", "State",
+
+  # Apoptotic / stress
+  "MALAT1", "Apoptotic", "State",
+  "NEAT1", "Apoptotic", "State",
+
+  # CD4 lineage
+  "CD3D", "CD4", "Identity",
+  "CD3E", "CD4", "Identity",
+  "CD4",  "CD4", "Identity",
+  "TRBC1","CD4", "Identity",
+
+  # CD8 lineage
+  "FCGR3A","CD8", "Identity",
+  "CD3D", "CD8", "Identity",
+  "CD3E", "CD8", "Identity",
+  "CD8A", "CD8", "Identity",
+  "CD8B", "CD8", "Identity",
+  "TRBC1","CD8", "Identity",
+  "NCR1", "CD8", "Identity",
+
+  # Cytotoxic
+  "PRF1","Cytotoxic", "Function",
+  "GZMB","Cytotoxic", "Function",
+  "GNLY","Cytotoxic", "Function",
+  "GZMH","Cytotoxic", "Function",
+  "CCL5","Cytotoxic", "Function",
+  "NKG7","Cytotoxic", "Function",
+  "KLRG1","Cytotoxic", "Function",
+  "GZMA","Cytotoxic", "Function",
+
+  # Exhausted
+  "PDCD1","Exhausted", "State",
+  "LAG3","Exhausted", "State",
+  "TOX","Exhausted", "State",
+  "TIGIT","Exhausted", "State",
+  "CD226","Exhausted", "State",
+  "GZMK","Exhausted", "State",
+  "HAVCR2","Exhausted", "State",
+  "XCL1","Exhausted", "State",
+  "XCL2","Exhausted", "State",
+  "CD160","Exhausted", "State",
+
+  # HLA
+  "HLA-DRA","HLA", "Function",
+  "HLA-DRB1","HLA", "Function",
+
+  # IFN / ISG
+  "IFNG","IFN", "Function",
+  "IFIT2","IFN", "Function",
+  "IFIT3","IFN", "Function",
+  "ISG15","IFN", "Function",
+  "STAT1","IFN", "Function",
+  "IFI6","IFN", "Function",
+  "IRF7","IFN", "Function",
+  "MX1","IFN", "Function",
+  "IFITM3","IFN", "Function",
+
+  # Inflammatory / NFkB
+  "TNFAIP3","Inflammatory", "Function",
+  "NFKB1","Inflammatory", "Function",
+  "NFKBIA","Inflammatory", "Function",
+  "NFKBIZ","Inflammatory", "Function",
+  "STAT4","Inflammatory", "Function",
+
+  # Memory
+  "CD44","Memory", "State",
+  "PTPRC","Memory", "State",
+  "CCR7","Memory", "State",
+  "CD27","Memory", "State",
+  "CD28","Memory", "State",
+
+  # Naive
+  "CCR7","Naif", "State",
+  "SELL","Naif", "State",
+  "CD27","Naif", "State",
+  "CD28","Naif", "State",
+  "TCF7","Naif", "State",
+  "IL7R","Naif", "State",
+  "LEF1","Naif", "State",
+
+  # Proliferating
+  "CENPV","Prolif", "State",
+  "MKI67","Prolif", "State",
+  "NCAPG","Prolif", "State",
+  "KIFC1","Prolif", "State",
+  "CENPE","Prolif", "State",
+  "ORC6","Prolif", "State",
+
+  # Resident (Trm)
+  "CD69","Resident", "State",
+  "CXCR6","Resident", "State",
+  "NR4A2","Resident", "State",
+  "RUNX3","Resident", "State",
+
+  # Senescent
+  "KLRG1","Senescent", "State",
+  "B3GAT1","Senescent", "State",
+  "CD27","Senescent", "State",
+  "CD28","Senescent", "State",
+  "LAMP1","Senescent", "State",
+  "IL1A","Senescent", "State",
+  "FAS","Senescent", "State",
+  "TP53","Senescent", "State",
+  "TP53BP1","Senescent", "State",
+  "CDKN1A","Senescent", "State",
+  "CDKN2A","Senescent", "State",
+  "MKI67","Senescent", "State",
+
+  # Tfh
+  "IL21","Tfh", "Identity",
+  # "FR4","Tfh", "Identity", # Only in mouse
+  "CXCR5","Tfh", "Identity",
+  "BCL6","Tfh", "Identity",
+  "PDCD1","Tfh", "Identity",
+  "ICOS","Tfh", "Identity",
+
+  # Th1
+  "CX3CR1","Th1", "Identity",
+  "IFNG","Th1", "Identity",
+  "TBX21","Th1", "Identity",
+  "CXCR3","Th1", "Identity",
+  "STAT4","Th1", "Identity",
+  "IL12RB2","Th1", "Identity",
+
+  # Th2
+  "GATA3","Th2", "Identity",
+  "CCR4","Th2", "Identity",
+  "IL4","Th2", "Identity",
+  "IL5","Th2", "Identity",
+  "IL13","Th2", "Identity",
+
+  # Th17
+  "RORC","Th17", "Identity",
+  "IL17A","Th17", "Identity",
+  "CCR6","Th17", "Identity",
+  "IL17F","Th17", "Identity",
+  "IL23R","Th17", "Identity",
+
+  # Treg
+  "FOXP3","Treg", "Identity",
+  "IL2RA","Treg", "Identity",
+  "CTLA4","Treg", "Identity",
+  "TIGIT","Treg", "Identity",
+  "IKZF2","Treg", "Identity",
+  "CD27","Treg", "Identity",
+  "IL7R","Treg", "Identity"
+)
+```
+
+### Visualization of all signatures together {.tabset}
+
+```{r}
+Tcell_signature <- "
+^CD3D$|^CD3E$|^CD4$|^TRBC1$|
+^FCGR3A$|^CD8A$|^CD8B$|^NCR1$|
+^CX3CR1$|^IFNG$|^TBX21$|^CXCR3$|^STAT4$|^IL12RB2$|
+^GATA3$|^CCR4$|^IL4$|^IL5$|^IL13$|
+^RORC$|^IL17A$|^CCR6$|^IL17F$|^IL23R$|
+^IL21$|^CXCR5$|^BCL6$|^PDCD1$|^ICOS$|
+^FOXP3$|^IL2RA$|^CTLA4$|^TIGIT$|^IKZF2$|^CD27$|^IL7R$|
+^PRF1$|^GZMB$|^GNLY$|^GZMH$|^CCL5$|^NKG7$|^KLRG1$|^GZMA$|
+^LAG3$|^TOX$|^CD226$|^GZMK$|^HAVCR2$|^XCL1$|^XCL2$|^CD160$|
+^B3GAT1$|^CD28$|^LAMP1$|^IL1A$|^FAS$|^TP53$|^TP53BP1$|^CDKN1A$|^CDKN2A$|^MKI67$|
+^CD69$|^CXCR6$|^NR4A2$|^RUNX3$|^TNFRSF9$|
+^CENPV$|^NCAPG$|^KIFC1$|^CENPE$|^ORC6$|
+^CCR7$|^SELL$|^TCF7$|^LEF1$|^Tcells4$|^PTPRC$|
+^MALAT1$|^NEAT1$|
+^IFIT2$|^IFIT3$|^ISG15$|^STAT1$|^IFI6$|^IRF7$|^MX1$|^IFITM3$|
+^TNFAIP3$|^NFKB1$|^NFKBIA$|^NFKBIZ$|
+^HLA-DRA$|^HLA-DRB1$
+"
+
+
+selected_features <- grep(Tcell_signature, rownames(sce), value=TRUE)
+
+
+m2 <- presto_markers %>%
+  filter(feature %in% selected_features) %>%
+  select(feature, group, avgExpr, pct_in) %>%
+  left_join(signature_tbl, by = "feature") %>%
+  mutate(signature_class = case_when(
+  cell_type %in% c("CD4","CD8","Th1","Th2","Th17","Tfh","Treg") ~ "Identity",
+  cell_type %in% c("Cytotoxic","IFN","Inflammatory","HLA") ~ "Function",
+  cell_type %in% c("Naif","Memory","Activated","Exhausted",
+                    "Resident","Prolif","Senescent","Apoptotic") ~ "State"
+)) %>%
+  filter(!is.na(cell_type)) %>%
+  group_by(feature) %>%
+  mutate(
+    avgExpr = avgExpr - mean(avgExpr),
+    avgExpr = scales::rescale(avgExpr, to = c(-2,2))
+  ) %>%
+  ungroup()
+
+ggplot(m2, 
+       aes(x = feature,
+               y = fct_reorder(as.character(group), group),
+               color = avgExpr,
+               size = pct_in)) +
+  geom_point() +
+  scale_color_gradient2(low="blue", mid="white", high="red") +
+  facet_wrap(~cell_type, scales="free", ncol=10) +
+  theme(
+    axis.text.x = element_text(angle=45, hjust=1),
+    axis.text.y = element_text(angle=45, hjust=1)
+  ) +
+  labs(
+    title = "LT Compartment - All Signatures",
+    x = "Genes markers",
+    y = "Clusters"
+  )
+
+dir.create(
+   file.path(
+     DIR_RESULT,
+     "All_Tcells",
+     "Annotation",
+     "Manual"),
+   recursive = TRUE,
+   showWarnings = FALSE)
+
+ggsave(
+       filename = file.path(
+         DIR_RESULT,
+         "All_Tcells",
+         "Annotation",
+         "Manual",
+         "Marker_Signatures_LT_Compartment_All_Signatures.png"),
+       width = 20, height = 10)
+)
+```
+
+### View of specific signatures {.tabset}
+
+```{r Viz specific signature}
+m3 <- presto_markers %>%
+  filter(feature %in% selected_features) %>%
+  select(feature, group, avgExpr, pct_in) %>%
+  left_join(signature_tbl, by = "feature") %>%
+  filter(!is.na(cell_type)) %>%
+  group_by(feature) %>%
+  mutate(
+    avgExpr = avgExpr - mean(avgExpr),
+    avgExpr = scales::rescale(avgExpr, to = c(-2,2))
+  ) %>%
+  ungroup()
+
+for (i in unique(m3$class)) {
+  p <- ggplot(m3 %>% filter(class == i), 
+         aes(x=feature, y=fct_reorder(as.character(group), group), color = avgExpr, size = pct_in)) +
+    geom_point()+
+    scale_color_gradient2(low = "blue", mid="white",high = "red")+
+    # theme_minimal() +
+    facet_wrap(~ cell_type, scales = "free", ncol = 4) +
+    theme(axis.text.y = element_text(angle=45, hjust=1), 
+          axis.text.x = element_text(angle=45, hjust=1)) +
+    labs(
+    title = paste0("LT Compartment - ", i),
+    x = "Genes markers",
+    y = "Clusters"
+  )
+  
+  print(p)
+  
+  dir.create(
+    file.path(
+      DIR_RESULT,
+      "All_Tcells",
+      "Annotation",
+      "Manual"),
+    recursive = TRUE,
+    showWarnings = FALSE
+  )
+  
+  ggsave(
+    filename = file.path(
+      DIR_RESULT,
+      "All_Tcells",
+      "Annotation",
+      "Manual",
+      paste0("Marker_Signatures_LT_Compartment_", i, ".png")),
+    plot = p,
+    width = 20, height = 10
+  )
+}
+```
+
+For now I think that we don't need to be to specific on pop annotation because we have all Tcells. For now we have to identified major populations (CD4, CD8) by combining annotation from me + automatic + from PPA to be sure that we analyse the right populations later.
+
+And then we extract count for specific pop cd8 and cd4 cells and perform a new clustering/annotation on each of them separately to have more precise subpopulations.
+
+```{r Combine annot}
+cluster_annotation_list <- list(
+  "0" = "CD4_naive_and_memory",
+  "1" = "CD8_Cytotox_exhausted",
+  "2" = "CD4_inflammed",
+  "3" = "CD8_cytotox_low_resident_inflammed",
+  "4" = "CD8_naive",
+  "5" = "???",
+  "6" = "Dying_Tcells",
+  "7" = "CD8_IFN"
+)
+
+# Add annotations to Seurat object
+seu$manual_annotation <- plyr::mapvalues(
+  seu$seurat_clusters,
+  from = names(cluster_annotation_list),
+  to = unlist(cluster_annotation_list)
+)
+
+# Names of cells with matching annotations between automatic (mine and PPA SingleR predictions) and manual (mine) annotation
+## But first let's harmonize the names between predicted.celltype.l3_jordan and predicted.celltype.l3
+seu$predicted.celltype.l3_jordan <- plyr::mapvalues(
+  seu$predicted.celltype.l3_jordan,
+  from = c("Non-Vd2 gd T cells", "Naive CD4 T cells", "Follicular helper T cells", "Terminal effector CD8 T cells", "Vd2 gd T cells", "MAIT cells", "Terminal effector CD4 T cells", "Th1/Th17 cells", "Th17 cells", "Th1 cells", "Th2 cells", "Effector memory CD8 T cells", "T regulatory cells", "Central memory CD8 T cells", "Naive CD8 T cells", "Natural killer cells", "Myeloid dendritic cells", "Progenitor cells"),
+  to = c("Non-Vd2 gd T cells", "Naive CD4 T cells", "Follicular helper T cells CD4", "Terminal effector CD8 T cells", "Vd2 gd T cells", "MAIT cells", "Terminal effector CD4 T cells", "Th1/Th17 cells CD4", "Th17 cells CD4", "Th1 cells CD4", "Th2 cells CD4", "Effector memory CD8 T cells", "T regulatory cells CD4", "Central memory CD8 T cells", "Naive CD8 T cells", "Natural killer cells", "Myeloid dendritic cells", "Progenitor cells")
+)
+
+
+
+matched_cells <- WhichCells(
+  seu,
+  expression =
+    (
+      grepl("CD4", predicted.celltype.l3_jordan) &
+      grepl("CD4", predicted.celltype.l1) &
+      grepl("CD4", manual_annotation)
+    ) |
+    (
+      grepl("CD8", predicted.celltype.l3_jordan) &
+      grepl("CD8", predicted.celltype.l1) &
+      grepl("CD8", manual_annotation)
+    )
+)
+length(matched_cells)
+length(seu@meta.data$manual_annotation)
+# Le nombre de cellules avec annotation "Natural killer cells" dans predicted.celltype.l3_jordan
+length(
+  predicted_cells <- WhichCells(
+    seu,
+    expression = (predicted.celltype.l1 == "other T")
+))
+
+```
+
+There is a lot of cells annotate gdTcells but I will not focus on them for now as I want to focus on CD4 and CD8 Tcells, and there are too different from cd4+ and cd8+.
+
+# Session Info {.tabset .unnumbered}
+
+```{r Session Info}
+sessionInfo()
+```
+
+::: callout-note
+This is a note.
+:::
+
+::: callout-tip
+This is a tip.
+:::
+
+::: callout-warning
+This is a warning.
+:::
+
+::: callout-important
+Important message.
+:::
+
+::: callout-caution
+Caution!
+:::
+
+::: {.callout-tip title="Pro Tip" icon="lightbulb" collapse="true"}
+Use `SCTransform` instead of log-normalization for variance stabilization.
+:::
+
+::: {.panel-tabset .panel-tabset-pills}
+## SCTransform
+
+Plot A
+
+## Log-normalization
+
+Plot B
+:::
+
+::: my-highlight
+Some highlighted text.
+:::
