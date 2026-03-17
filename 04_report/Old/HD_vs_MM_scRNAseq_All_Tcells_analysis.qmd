@@ -1118,7 +1118,6 @@ for (img in img_files) {
 ```{r display_plots Cell cycle after filtering, echo=FALSE, out.width = "800px"}
 
 # Affichage automatique des plots
-
 img_dir <- file.path(DIR_RESULT, "All_Tcells", "QC", "Doublet", "After_QC")
 
 img_files <- list.files(img_dir, pattern = "\\.png$", full.names = TRUE)
@@ -1131,126 +1130,652 @@ for (img in img_files) {
 
 ```
 
+No doublets left in the dataset !
+
+<br>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
+
 # Normalization {.tabset}
+
+Now that we have a clean dataset of T cells, we can proceed to the normalization step.
+
+::: callout-note
+Normalization is a crucial step in single-cell RNA-seq data analysis, as it helps to correct for technical variations and allows for meaningful comparisons of gene expression levels across cells. We will perform normalization separately for the RNA and ADT matrices, as they represent different types of data (gene expression vs protein expression) and may require different normalization methods.
+:::
 
 ## RNA matrix {.tabset}
 
+For the RNA matrix, we will use the SCTransform method for normalization.
+
+::: callout-note
+SCTransform is a variance-stabilizing transformation that models gene expression using a regularized negative binomial regression. It accounts for technical noise and allows for more accurate identification of variable features, which can improve downstream analyses such as PCA, UMAP, and clustering. + We can regress some vars, like here mito percent per cells, it means that we remove the effect of this variable for calculation of normalisation factors and variance stabilization, which can help to reduce the influence of mitochondrial gene expression on downstream analyses, as it is often a source of technical variation in scRNA-seq data. By using SCTransform, we can ensure that our normalization is robust and that we are focusing on the most biologically relevant features for our analysis.
+
+We also set the number of variable features to 3000, which is a common choice for scRNA-seq data and can be optimized based on the specific dataset and downstream analyses. By tuning this parameter, we can find the optimal number of variable features that capture the most informative genes for our analysis while avoiding noise from less informative genes.
+:::
+
+::: callout-warning
+Optimize and tune according PCA, UMAP, clustering results the variable.feature arguments. Know how to justify 3000 variable features...
+:::
+
 ```{r Normalize RNA}
-DefaultAssay(seu) <- "RNA"
-seu <- NormalizeData(seu, assay = "RNA")
+seu_QC <- qread(file.path(DIR_DATA, "Processed_data", "03_hd_mm_scrnaseq_tcell_qc_seurat.qs"))
+DefaultAssay(seu_QC) <- "RNA"
+
+options(future.globals.maxSize = Inf)
+future::plan("sequential")
+
+seu_QC <- SCTransform(
+  seu_QC,
+  # vars.to.regress = c("subsets_mito_percent"),  # optionnal 
+  variable.features.n = 3000, # To optimize and tune according PCA, UMAP, clustering results (see later)
+  vst.flavor = "v2",
+  return.only.var.genes = TRUE, # Limite la taille de l'objet Seurat en limitant la matrice scale.data uniquement aux gènes les plus variables (variable features) au lieu de tous les gènes, ce qui peut être très volumineux et consommer beaucoup de mémoire
+  verbose = TRUE)
+
+gc()
 ```
+
+::: callout-tip
+By regressing out the mitochondrial percentage, we can reduce the influence of mitochondrial gene expression on downstream analyses, which is often a source of technical variation in scRNA-seq data.
+:::
+
+::: callout-tip
+Test ***different parameters*** (e.g., ***variable.features.n***) and evaluate their impact on downstream analyses (PCA, UMAP, clustering) to find the optimal settings for dataset.
+:::
 
 ## ADT matrix {.tabset}
 
+For the ADT matrix, we will use the CLR (Centered Log-Ratio) normalization method.
+
+::: callout-note
+It is commonly used for CITE-seq data. CLR normalization divides each count by the geometric mean of the values in that cell, then log-transforms the result. This method helps to account for the multiplicative nature of technical variations in ADT data, such as differences in antibody capture efficiency and background noise.
+:::
+
 ```{r Normalize ADT}
-DefaultAssay(seu) <- "ADT"
-seu <- NormalizeData(seu, normalization.method = "CLR", margin = 2, assay = "ADT")
+DefaultAssay(seu_QC) <- "ADT"
+
+seu_QC <- NormalizeData(
+  seu_QC, 
+  normalization.method = "CLR", # CLR = Centered Log-Ratio : standard for ADT (CITE-seq) data (Divide/Center each count by the geometric mean of the values in that cell, then log-transform)
+  margin = 2, # Normalize across cells (so cols)
+  assay = "ADT")
+
+# Les counts ADT sont dominés par des rapports :
+# efficacité de l’anticorps
+# accessibilité de l’épitope
+# capture / lavage
+# bruit de fond
+# 
+# 👉 Si une cellule capte “2× plus d’anticorps”, toutes les protéines montent proportionnellement.
+# 
+# C’est un effet multiplicatif, pas une addition constante.
 ```
 
+<br>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
+
+
 # Most Variable Features {.tabset}
+
+::: callout-note
+We don't need it here because SCTransform already identifies variable features during the normalization step and stores them in the "SCT" assay. However, if we were to use a different normalization method (e.g., NormalizeData), we would need to run FindVariableFeatures on the "RNA" assay to identify the most variable genes for downstream analyses.
+:::
 
 ## RNA matrix {.tabset}
 
 ```{r MVP RNA}
-DefaultAssay(seu) <- "RNA"
-seu <- FindVariableFeatures(seu, assay = "RNA")
+# DefaultAssay(seu_QC) <- "RNA"
+# seu_QC <- FindVariableFeatures(seu_QC, 
+#                             assay = "RNA",
+#                             selection.method = "vst",
+#                             nfeatures = 2000)
 ```
+
+::: callout-note
+Not nécessary as we used SCTransform for normalization, which already identifies variable features during the process and stores them in the "SCT" assay. Otherwise, run NormalizeData and then FindVariableFeatures (with specific argument/options) on the "RNA" assay.
+:::
+
+::: callout-note
+SCTTransform is based on Binomial Neg and perform Pearson residuals to identify variable features, which is more robust and accurate than traditional methods (e.g., vst) for scRNA-seq data. It accounts for technical noise and allows for better identification of biologically relevant features, leading to improved downstream analyses (PCA, UMAP, clustering). By using the variable features identified by SCTransform, we can ensure that we are focusing on the most informative genes for our analysis.
+:::
 
 ## ADT matrix {.tabset}
 
 ```{r MVP ADT}
-DefaultAssay(seu) <- "ADT"
-VariableFeatures(seu) <- rownames(seu[["ADT"]])
+DefaultAssay(seu_QC) <- "ADT"
+VariableFeatures(seu_QC) <- rownames(seu_QC[["ADT"]])
 ```
+
+We take all the ADT features as variable features because we have only 13 ADT features, and we want to keep all of them for downstream analysis (clustering, annotation, etc.). All are biologically relevant and we don't want to exclude any of them.
+
+<br>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
 
 # Scaling {.tabset}
 
 ## RNA matrix {.tabset}
 
 ```{r Scale RNA}
-DefaultAssay(seu) <- "RNA"
-seu <- ScaleData(seu, 
-                 assay = "RNA",
-                 vars.to.regress = c("nCount_RNA", "percent.mt"),
-                 features = VariableFeatures(seu))
+# DefaultAssay(seu_QC) <- "RNA"
+# seu_QC <- ScaleData(
+#   seu_QC,
+#   assay = "RNA",
+#   vars.to.regress = c("nCount_RNA", "subsets_mito_percent", "nFeature_RNA", "emulsion", "subsets_ribo_percent", "Phase"),
+#   features = VariableFeatures(seu_QC))
 ```
+
+::: callout-tip
+We don't need to Scale data if we use SCTransform because it's already performed during the normalization step. It's still debate but run Scaling or not depends mostly on what we will see (OR NOT) later on PCA, UMAP, clustering results. If we see that the technical factors (e.g., nCount_RNA, subsets_mito_percent) are driving the separation of cells in PCA/UMAP, then we can try to regress them out during Scaling to reduce their influence on downstream analyses. Otherwise, if we see that the biological signal is strong and not confounded by technical factors, we can skip Scaling and directly run PCA/UMAP on the SCT assay.
+:::
 
 ## ADT matrix {.tabset}
 
 ```{r Scale ADT}
-DefaultAssay(seu) <- "ADT"
-seu <- ScaleData(seu, assay = "ADT")
+DefaultAssay(seu_QC) <- "ADT"
+seu_QC <- ScaleData(
+  seu_QC,
+  assay = "ADT")
 ```
+
+<br>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
 
 # PCA {.tabset}
 
 ## RNA matrix {.tabset}
 
-```{r PCA RNA}
-DefaultAssay(seu) <- "RNA"
-seu <- RunPCA(seu, reduction.name = "pca")
-p_elbow_PCA_RNA <- ElbowPlot(seu, ndims = 50, reduction = "pca")
+### Run
 
+::: callout-tip
+Run PCA on the "SCT" assay, which contains the normalized and scaled data from SCTransform.
+:::
+
+We will use the variable features identified by SCTransform for PCA, which are stored in the "SCT" assay. We can specify the number of principal components (npcs) to compute based on our dataset and downstream analysis needs. In this case, we will compute 50 PCs, but this can be adjusted based on the elbow plot and the amount of variance explained by the PCs.
+
+```{r PCA RNA Run}
+DefaultAssay(seu_QC) <- "SCT"
+seu_QC <- RunPCA(
+  seu_QC, 
+  reduction.name = "pca",
+  npcs = 50,
+  weight.by.var = TRUE,
+  verbose = TRUE)
+```
+
+### Visualize
+
+```{r PCA RNA ElbowPlot}
+p_pca_rna <- ElbowPlot(
+  seu_QC, 
+  ndims = 50, 
+  reduction = "pca") +
+  ggtitle("PCA Elbow Plot - RNA assay")
+p_pca_rna
 
 dir.create(
-  file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "PCA"),
+  file.path(DIR_RESULT,
+            "All_Tcells",
+            "PCA",
+            "RNA"),
   recursive = TRUE,
-  showWarnings = FALSE
-)
+  showWarnings = FALSE)
 
 ggsave(
-  plot = p_elbow_PCA_RNA,
+  plot = p_pca_rna,
   filename = file.path(
     DIR_RESULT,
     "All_Tcells",
     "PCA",
+    "RNA",
     "RNA_PCA_elbowplot.png"),
   width = 12,
-  height = 6,
-  dpi = 300)
+  height = 6)
 ```
+
+11 PCs seems to be a good choice based on the elbow plot, but we can also look at the percentage of variance explained by each PC to make a more informed decision.
+
+::: callout-tip
+We can also test different numbers of PCs (e.g., 10, 15, 20) and evaluate their impact on downstream analyses (UMAP, clustering) to find the optimal number of PCs for our dataset.
+:::
+
+```{r PCA RNA Variance Explained}
+# Percentage of variance explained by each PC
+pct_var <- seu_QC[["pca"]]@stdev^2
+pct_var <- pct_var / sum(pct_var) * 100 
+
+cum_var <- cumsum(pct_var)
+
+df_var <- data.frame(
+  PC = 1:length(pct_var),
+  Variance = pct_var,
+  CumulativeVariance = cum_var
+)
+
+p_cumvar_rna <- ggplot(df_var, aes(x = PC)) +
+  geom_bar(aes(y = Variance), stat = "identity", fill = "skyblue") +
+  geom_line(aes(y = CumulativeVariance), color = "red", size = 1) +
+  geom_point(aes(y = CumulativeVariance), color = "red", size = 2) +
+  ylab("Variance Explained (%)") +
+  xlab("Principal Components") +
+  ggtitle("Explained variance per PC with cumulative variance") +
+  theme_minimal() +
+  scale_x_continuous(breaks = 1:length(pct_var)) +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )
+p_cumvar_rna
+
+ggsave(
+  plot = p_cumvar_rna,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "PCA",
+    "RNA",
+    "RNA_Variance_explained_by_PCs.png"),
+  width = 12,
+  height = 6)
+```
+
+11 PC allow us to explained almost 75% of the variance in RNA matrix
+
+```{r PCA RNA PC Heatmap}
+#| fig-width: 10
+#| fig-height: 12
+#| fig-cap: "PCA Heatmap - RNA assay"
+#| fig-note: "Heatmap of the top genes contributing to the first 16 PCs, which can help us understand the biological processes driving the variation in our dataset. We can look at the top genes for each PC and see if they are associated with specific pathways or cell types, which can provide insights into the underlying biology of our T cells."
+
+DefaultAssay(seu_QC) <- "SCT"
+
+p_pca_rna_heatmap <- DimHeatmap(
+  seu_QC,
+  reduction = "pca",
+  dims = 1:11,
+  cells = 500,
+  balanced = TRUE,
+  fast = TRUE
+) + ggtitle("PCA Heatmap - RNA assay")
+p_pca_rna_heatmap
+
+ggsave(
+  plot = p_pca_rna_heatmap,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "PCA",
+    "RNA",
+    "RNA_PCA_heatmap.png"),
+)
+```
+
+Heatmap of the top genes contributing to the first 11 PCs, which can help us understand the biological processes driving the variation in our dataset. We can look at the top genes for each PC and see if they are associated with specific pathways or cell types, which can provide insights into the underlying biology of our T cells.
+
+```{r PCA DimPlot RNA emulsion}
+#| fig-width: 7
+#| fig-height: 5
+#| fig-cap: "PCA DimPlot by emulsion - RNA assay"
+#| fig-alt: "PCA DimPlot colored by emulsion"
+#| fig-note: "PCA DimPlot colored by emulsion, which can help us identify potential batch effects or technical variations associated with the emulsion. If we see that cells from different emulsions cluster separately in PCA space, it may indicate that there are technical differences between the emulsions that are driving the separation of cells. This can be important to consider when interpreting downstream analyses (e.g., clustering, differential expression) and may require batch correction methods (e.g., Harmony) to mitigate the influence of this technical variation."
+
+p_pca_rna_dimplot_emulsion <- DimPlot(
+  seu_QC,
+  reduction = "pca",
+  group.by = "emulsion") +
+  scale_fill_manual(values = pal, drop = FALSE) +
+  ggtitle("PCA DimPlot - RNA assay")
+p_pca_rna_dimplot_emulsion
+
+ggsave(
+  plot = p_pca_rna_dimplot_emulsion,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "PCA",
+    "RNA",
+    "RNA_PCA_DimPlot_by_emulsion.png"),
+  width = 12,
+  height = 6)
+```
+```{r CD4 PCA DimPlot RNA emulsion wrap}
+#| fig-width: 7
+#| fig-height: 10
+#| fig-cap: "PCA DimPlot by emulsion - RNA assay"
+#| fig-alt: "PCA DimPlot colored by emulsion"
+#| fig-note: "PCA DimPlot colored by emulsion, which can help us identify potential batch effects or technical variations associated with the emulsion. If we see that cells from different emulsions cluster separately in PCA space, it may indicate that there are technical differences between the emulsions that are driving the separation of cells. This can be important to consider when interpreting downstream analyses (e.g., clustering, differential expression) and may require batch correction methods (e.g., Harmony) to mitigate the influence of this technical variation."
+
+p_pca_rna_dimplot_emulsion_wrap <- DimPlot(
+  seu_QC,
+  reduction = "pca",
+  group.by = "emulsion") +
+  ggtitle("PCA DimPlot - RNA assay") + 
+  scale_fill_manual(values = pal, drop = FALSE) +
+  facet_wrap(~emulsion, ncol = 6) +
+  NoLegend()
+p_pca_rna_dimplot_emulsion_wrap
+
+ggsave(
+  plot = p_pca_rna_dimplot_emulsion_wrap,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "PCA",
+    "RNA",
+    "RNA_PCA_DimPlot_by_emulsion_wrap.png"),
+  width = 15,
+  height = 10)
+```
+
+There is some separation of cells based on emulsion in PCA space, which suggests that there may be some batch effect or technical variation associated with the emulsion. This could be due to differences in sample processing, library preparation, or sequencing between emulsions. It's important to keep this in mind when interpreting downstream analyses (e.g., clustering, differential expression) and consider applying batch correction methods (e.g., Harmony) if necessary to mitigate the influence of this technical variation.
+
+```{r PCA DimPlot RNA Phase}
+p_pca_rna_dimplot_phase <- DimPlot(
+  seu_QC,
+  reduction = "pca",
+  group.by = "Phase") +
+  ggtitle("PCA DimPlot - RNA assay")
+p_pca_rna_dimplot_phase
+
+ggsave(
+  plot = p_pca_rna_dimplot_phase,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "PCA",
+    "RNA",
+    "RNA_PCA_DimPlot_by_Phase.png"),
+  width = 12,
+  height = 6)
+
+p_pca_rna_dimplot_phase_wrap <- DimPlot(
+  seu_QC,
+  reduction = "pca",
+  group.by = "Phase") +
+  ggtitle("PCA DimPlot - RNA assay") + 
+  facet_wrap(~Phase)
+p_pca_rna_dimplot_phase_wrap
+
+ggsave(
+  plot = p_pca_rna_dimplot_phase_wrap,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "PCA",
+    "RNA",
+    "RNA_PCA_DimPlot_by_Phase_wrap.png"),
+  width = 12,
+  height = 6)
+```
+
+No clear separation of cells based on cell cycle phase in PCA space, which is good because it means that the biological factors (e.g., cell cycle phase) are not driving the separation of cells in PCA space. This suggests that the normalization and scaling steps have successfully mitigated the influence of these factors on downstream analyses.
 
 ## ADT matrix {.tabset}
 
-```{r PCA ADT}
-DefaultAssay(seu) <- "ADT"
-seu <- RunPCA(seu, reduction.name = "apca")
-p_Elbow_PCA_ADT <- ElbowPlot(seu, ndims = 13, reduction = "apca")
+```{r PCA ADT Run}
+DefaultAssay(seu_QC) <- "ADT"
+seu_QC <- RunPCA(
+  seu_QC, 
+  reduction.name = "apca",
+  npcs = 14,
+  weight.by.var = TRUE,
+  verbose = TRUE)
+```
+
+```{r PCA ADT ElbowPlot}
+p_pca_adt <- ElbowPlot(
+  seu_QC, 
+  ndims = 50, 
+  reduction = "apca") +
+  ggtitle("PCA Elbow Plot - RNA assay")
+p_pca_adt
+
+dir.create(
+  file.path(DIR_RESULT,
+            "All_Tcells",
+            "PCA",
+            "ADT"),
+  recursive = TRUE,
+  showWarnings = FALSE)
 
 ggsave(
-  plot = p_Elbow_PCA_ADT,
+  plot = p_pca_adt,
   filename = file.path(
     DIR_RESULT,
     "All_Tcells",
     "PCA",
+    "ADT",
     "ADT_PCA_elbowplot.png"),
   width = 12,
-  height = 6,
-  dpi = 300)
+  height = 6)
 ```
 
-# Batch correction (Harmony) {.tabset}
+```{r PCA ADT Variance Explained}
+# Percentage of variance explained by each PC
+pct_var <- seu_QC[["apca"]]@stdev^2
+pct_var <- pct_var / sum(pct_var) * 100 
 
-## RNA matrix {.tabset}
+cum_var <- cumsum(pct_var)
 
-```{r Harmony RNA}
-DefaultAssay(seu) <- "RNA"
-#batch correction with Harmony (RNA)
-seu <- RunHarmony(seu, 
-                  group.by.vars = "id", 
-                  plot_convergence = TRUE)
 
-# Save convergence plot
-dir.create(
+df_var <- data.frame(
+  PC = 1:length(pct_var),
+  Variance = pct_var,
+  CumulativeVariance = cum_var
+)
+
+p_cumvar_adt <- ggplot(df_var, aes(x = PC)) +
+  geom_bar(aes(y = Variance), stat = "identity", fill = "skyblue") +
+  geom_line(aes(y = CumulativeVariance), color = "red", size = 1) +
+  geom_point(aes(y = CumulativeVariance), color = "red", size = 2) +
+  ylab("Variance Explained (%)") +
+  xlab("Principal Components") +
+  ggtitle("Explained variance per PC with cumulative variance") +
+  theme_minimal() +
+  scale_x_continuous(breaks = 1:length(pct_var)) +
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)
+  )
+p_cumvar_adt
+
+ggsave(
+  plot = p_cumvar_adt,
   filename = file.path(
     DIR_RESULT,
     "All_Tcells",
-    "Harmony",
-    "Convergence_Plot"),
-  showWarnings = FALSE
+    "PCA",
+    "ADT",
+    "ADT_Variance_explained_by_PCs.png"),
+  width = 12,
+  height = 6)
+```
+
+We take ALL !!! The 13 PCs for downstream analyses (UMAP, clustering) because we have only 13 ADT features, and we want to keep all of them for downstream analysis (clustering, annotation, etc.). All are biologically relevant and we don't want to exclude any of them.
+
+```{r }
+qsave(
+  seu_QC,
+  file.path(DIR_DATA, "Processed_data", "04_hd_mm_scrnaseq_tcell_normalized_seurat.qs")
+)
+
+seu_QC <- qread(file.path(DIR_DATA, "Processed_data", "04_hd_mm_scrnaseq_tcell_normalized_seurat.qs"))
+```
+
+
+
+<br>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
+
+
+# Batch correction {.tabset}
+
+## Harmony {.tabset}
+
+```{r batch correction harmony, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "batch_correction", "harmony")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "batch_correction", "tool", "harmony_gridsearch.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "04_hd_mm_scrnaseq_tcell_normalized_seurat.qs"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "--theta", "1,2,3,4",
+    "--sigma", "0.05,0.1,0.2",
+    "--dims", 11
+  ),
+  stdout = file.path(DIR_LOG, "batch_correction", "harmony", paste0("output_batch_correction_harmony_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "batch_correction", "harmony", paste0("error_batch_correction_harmony_", log_time, ".log"))
+)
+
+```
+
+```{r compute lisi, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "batch_correction", "lisi")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "batch_correction", "metric", "compute_lisi.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_RESULT, "All_Tcells", "Integration", "Harmony_gridsearch"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-c", "condition"
+  ),
+  stdout = file.path(DIR_LOG, "batch_correction", "lisi", paste0("output_batch_correction_lisi_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "batch_correction", "lisi", paste0("error_batch_correction_lisi_", log_time, ".log"))
+)
+
+```
+
+```{r compute knn, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "batch_correction", "knn")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "batch_correction", "metric", "compute_knn.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_RESULT, "All_Tcells", "Integration", "Harmony_gridsearch"),
+    "-b", "emulsion",
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT,
+    "-l", "condition"
+  ),
+  stdout = file.path(DIR_LOG, "batch_correction", "knn", paste0("output_batch_correction_knn_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "batch_correction", "knn", paste0("error_batch_correction_knn_", log_time, ".log"))
+)
+
+```
+
+```{r compare integration, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "batch_correction", "comparaison")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "batch_correction", "comparaison", "compare_integration.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_RESULT, "All_Tcells", "Integration"),
+    "-d", "All_Tcells",
+    "-o", DIR_RESULT
+  ),
+  stdout = file.path(DIR_LOG, "batch_correction", "comparaison", paste0("output_batch_correction_comparaison_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "batch_correction", "comparaison", paste0("error_batch_correction_comparaison_", log_time, ".log"))
+)
+
+```
+
+
+
+
+
+
+::: callout-tip
+Ideally, test different batch correction methods (e.g., Harmony, Seurat's integration, MNN) and evaluate their impact on downstream analyses (PCA, UMAP, clustering) to find the optimal method for dataset.
+:::
+
+::: callout-tip
+Test LISI score also BEFORE and AFTER batch correction to quantitatively evaluate the effectiveness of the batch correction method in integrating the data while preserving biological variation.
+:::
+
+## RNA matrix {.tabset}
+
+### Before correction
+
+#### LISI score {.tabset}
+
+To assess the batch effect presence, we can compute the LISI (Local Inverse Simpson's Index) score, which quantifies the degree of mixing between batches (emulsions) and conditions in the embedding space.
+
+::: callout-note
+The LISI score ranges from 1 to K, where K is the number of categories in the variable being evaluated. Higher values indicate better local mixing across categories, while values close to 1 indicate strong local separation.
+:::
+
+##### Run
+
+```{r LISI score Run before correction}
+emb <- Embeddings(seu_QC, reduction = "pca")
+meta <- seu_QC@meta.data
+
+lisi_scores <- compute_lisi(
+  emb,
+  meta,
+  c("emulsion", "source", "condition")
+)
+
+summary(lisi_scores)
+
+```
+
+> emulsion quantifies batch mixing across the embedding: higher values indicate better batch correction.
+
+> source & condition quantifies condition mixing: lower values indicate better preservation of biological separation between conditions.
+
+::: callout-tip
+A low batch effect is characterized by high emulsion_LISI and low condition_LISI & source_LISI, indicating that technical batch effects are not present while biological differences between HH and MM are present.
+:::
+
+##### Visualize
+
+```{r LISI score Viz before correction}
+seu_QC$emulsion_LISI  <- lisi_scores$emulsion
+seu_QC$source_LISI    <- lisi_scores$source
+seu_QC$condition_LISI <- lisi_scores$condition
+
+FeaturePlot(
+  seu_QC,
+  features = c("emulsion_LISI", "source_LISI", "condition_LISI"),
+  cols = c("blue", "yellow", "red"),
+  min.cutoff = "q05",
+  max.cutoff = "q95"
 )
 
 ggsave(
@@ -1258,13 +1783,288 @@ ggsave(
     DIR_RESULT,
     "All_Tcells",
     "Harmony",
-    "Convergence_Plot",
-    "RNA_Harmony_convergence_plot.png"),
-  width = 8,
-  height = 6,
-  dpi = 300
-)
+    "All_Tcell_RNA_Harmony_LISI_scores_before_correction.png"),
+  width = 12,
+  height = 6)
+
 ```
+
+```{r LISI score Viz 2 before correction}
+ggplot(seu_QC@meta.data,
+       aes(x = predicted.celltype.l2, y = condition_LISI)) +
+  geom_boxplot(outlier.size = 0.3) +
+  coord_flip() +
+  theme_classic()
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_LISI_scores_by_celltype_before_correction.png"),
+  width = 12,
+  height = 6)
+```
+
+### Correction {.tabset}
+
+```{r Harmony RNA Run}
+DefaultAssay(seu_QC) <- "SCT"
+#batch correction with Harmony (RNA)
+seu_QC <- RunHarmony(seu_QC,
+                            group.by.vars = "emulsion",
+                            reduction = "pca",
+                            dims.use = 1:11,
+                            plot_convergence = TRUE,
+                            max.iter = 20,
+                            reduction.save = "harmony",
+                            assay.use = "SCT",
+                            verbose = TRUE,
+                            theta = 3, # theta is the diversity clustering penalty param
+                            lambda = NULL, # lambda is the ridge regression penalty param
+                            sigma = 0.2) # sigma is the bandwidth parameter for soft k-means clustering (default 0.1, smaller values lead to more aggressive correction)
+```
+
+This plot shows the convergence of the Harmony algorithm during batch correction. The y-axis represents the objective function value (or a similar metric) that the algorithm is trying to minimize, while the x-axis represents the iteration number. A decreasing trend in the objective function value indicates that the algorithm is successfully correcting for batch effects and converging towards a solution. If the plot shows a plateau or an increase in the objective function value, it may suggest that the algorithm is not converging properly, and you may need to adjust parameters (e.g., theta, lambda, sigma) or increase the number of iterations to achieve better batch correction.
+
+> Theta is the diversity clustering penalty parameter, which controls the strength of batch correction. Higher values will result in stronger correction, while lower values will allow for more batch-specific variation to remain in the data. The optimal value of theta can depend on the specific dataset and the degree of batch effect present, so it may require some tuning to find the best balance between correcting for batch effects and preserving biological variation.
+
+> Ridge regression penalty : Default lambda=1. Bigger values protect against over correction. If several covariates are specified, then lambda can also be a vector which needs to be equal length with the number of variables to be corrected. In this scenario, each covariate level group will be assigned the scalars specified by the user. If set to NULL, harmony will start lambda estimation mode to determine lambdas automatically and try to minimize overcorrection (Use with caution still in beta testing).
+
+> Width of soft kmeans clusters : Default sigma=0.1. Sigma scales the distance from a cell to cluster centroids. Larger values of sigma result in cells assigned to more clusters. Smaller values of sigma make soft kmeans cluster approach hard clustering.
+
+### After correction {.tabset}
+
+#### Convergence {.tabset}
+
+```{r Harmony RNA Convergence Plot}
+p_converge_Harmony <- last_plot()
+p_converge_Harmony
+
+dir.create(
+  file.path(DIR_RESULT,
+            "All_Tcells",
+            "Harmony"),
+  recursive = TRUE,
+  showWarnings = FALSE)
+
+ggsave(
+  plot = p_converge_Harmony,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_convergence_plot.png"),
+  width = 12,
+  height = 6)
+```
+
+Convergence plot of the Harmony algorithm, which shows how the batch correction process is progressing over iterations. The plot typically displays the objective function value (or a similar metric) on the y-axis and the iteration number on the x-axis. A decreasing trend in the objective function value indicates that the algorithm is successfully correcting for batch effects and converging towards a solution. If the plot shows a plateau or an increase in the objective function value, it may suggest that the algorithm is not converging properly, and you may need to adjust parameters (e.g., theta, lambda, sigma) or increase the number of iterations to achieve better batch correction. Here we are good.
+
+#### ElbowPlot {.tabset}
+
+```{r Harmony RNA ElbowPlot}
+p_elbow_Harmony <- ElbowPlot(
+  seu_QC, 
+  ndims = 50, 
+  reduction = "harmony") +
+  ggtitle("PCA Elbow Plot after Harmony - RNA assay")
+p_elbow_Harmony
+
+ggsave(
+  plot = p_elbow_Harmony,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_PCA_elbowplot.png"),
+  width = 12,
+  height = 6)
+```
+
+::: callout-note
+We have the almost same number of PCs to take into account after Harmony correction, which is good because it means that the batch correction process has not significantly altered the structure of the data in PCA space. This suggests that the Harmony algorithm has successfully corrected for batch effects while preserving the underlying biological variation in our T cell dataset.
+:::
+
+We will take 11 PC post-harmony
+
+#### PCA {.tabset}
+
+```{r Harmony RNA DimPlot PCA after Harmony}
+p_pca_harmony <- DimPlot(
+  seu_QC,
+  reduction = "harmony",
+  group.by = "emulsion") +
+  ggtitle("PCA DimPlot after Harmony - RNA assay") +
+  scale_color_manual(values = colors_55)
+p_pca_harmony
+
+ggsave(
+  plot = p_pca_harmony,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_PCA_DimPlot_by_emulsion.png"),
+  width = 12,
+  height = 6)
+```
+```{r Harmony RNA DimPlot PCA after Harmony wrap}
+#| fig-width: 7
+#| fig-height: 10
+#| fig-cap: "PCA DimPlot by emulsion after Harmony - RNA assay"
+#| fig-note: "PCA DimPlot colored by emulsion after Harmony correction, which can help us evaluate the effectiveness of the batch correction process. If we see that cells from different emulsions are now well mixed in PCA space, it suggests that the Harmony algorithm has successfully mitigated the influence of the emulsion on the separation of cells. This allows us to focus on the underlying biological variation in our CD4 T cell dataset without confounding technical effects."
+
+p_pca_harmony_wrap <- DimPlot(
+  seu_QC,
+  reduction = "harmony",
+  group.by = "emulsion") +
+  ggtitle("PCA DimPlot after Harmony - RNA assay") +
+  facet_wrap(~emulsion, ncol = 6) +
+  scale_color_manual(values = colors_55) +
+  NoLegend()
+p_pca_harmony_wrap
+
+ggsave(
+  plot = p_pca_harmony_wrap,
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_PCA_DimPlot_by_emulsion_wrap.png"),
+  width = 15,
+  height = 10)
+```
+
+We cannot see any separation of cells based on emulsion in PCA space after Harmony correction, which is good because it means that the batch effect associated with the emulsion has been successfully corrected. This suggests that the Harmony algorithm has effectively mitigated the influence of the emulsion on the separation of cells in PCA space, allowing us to focus on the underlying biological variation in our T cell dataset without confounding technical effects.
+
+#### LISI score {.tabset}
+
+To assess the quality of our batch correction, we can compute the LISI (Local Inverse Simpson's Index) score, which quantifies the degree of mixing between batches (emulsions) and conditions in the embedding space.
+
+::: callout-note
+The LISI score ranges from 1 to K, where K is the number of categories in the variable being evaluated. Higher values indicate better local mixing across categories, while values close to 1 indicate strong local separation.
+:::
+
+##### Run
+
+```{r LISI score Run after Harmony}
+emb <- Embeddings(seu_QC, reduction = "harmony")
+meta <- seu_QC@meta.data
+
+lisi_scores <- compute_lisi(
+  emb,
+  meta,
+  c("emulsion", "source", "condition")
+)
+
+summary(lisi_scores)
+
+```
+
+> emulsion quantifies batch mixing across the embedding: higher values indicate better batch correction.
+
+> source & condition quantifies condition mixing: lower values indicate better preservation of biological separation between conditions.
+
+::: callout-tip
+An optimal integration is therefore characterized by high emulsion_LISI and low condition_LISI & source_LISI, indicating that technical batch effects are removed while biological differences between HH and MM are preserved.
+:::
+
+We achieved effective correction of technical batch effects, as indicated by high emulsion LISI scores. However, we also observed increased mixing across biological variables such as condition and source. This suggests that Harmony may have partially overcorrected the data, potentially reducing biologically meaningful structure. This illustrates the inherent trade-off in batch correction between removing unwanted technical variation and preserving true biological heterogeneity, emphasizing the need for careful parameter tuning.
+
+##### Visualize
+
+```{r LISI score Viz after Harmony}
+seu_QC$emulsion_LISI  <- lisi_scores$emulsion
+seu_QC$source_LISI    <- lisi_scores$source
+seu_QC$condition_LISI <- lisi_scores$condition
+
+FeaturePlot(
+  seu_QC,
+  features = c("emulsion_LISI", "source_LISI", "condition_LISI"),
+  cols = c("blue", "yellow", "red"),
+  min.cutoff = "q05",
+  max.cutoff = "q95"
+)
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_LISI_scores.png"),
+  width = 12,
+  height = 6)
+
+```
+
+```{r LISI score Viz 2 after Harmony}
+ggplot(seu_QC@meta.data,
+       aes(x = predicted.celltype.l2, y = condition_LISI)) +
+  geom_boxplot(outlier.size = 0.3) +
+  coord_flip() +
+  theme_classic()
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_LISI_scores_by_celltype.png"),
+  width = 12,
+  height = 6)
+```
+
+```{r LISI score comparison before vs after Harmony}
+emb_raw <- Embeddings(seu_QC, reduction = "pca")
+emb_int <- Embeddings(seu_QC, reduction = "harmony")
+
+lisi_raw  <- compute_lisi(emb_raw,  meta, c("emulsion", "condition"))
+lisi_int  <- compute_lisi(emb_int,  meta, c("emulsion", "condition"))
+
+df <- rbind(
+  data.frame(score = lisi_raw$emulsion, type = "Raw", var = "Batch"),
+  data.frame(score = lisi_int$emulsion, type = "Integrated", var = "Batch"),
+  data.frame(score = lisi_raw$condition, type = "Raw", var = "Condition"),
+  data.frame(score = lisi_int$condition, type = "Integrated", var = "Condition")
+)
+
+ggplot(df, aes(type, score, fill = type)) +
+  geom_violin(trim = TRUE) +
+  facet_wrap(~var, scales = "free_y") +
+  theme_classic() +
+  NoLegend() +
+  ggtitle("LISI scores before and after Harmony correction") +
+  labs(y = "LISI Score (Mixing/Integration)")
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_LISI_scores_comparison.png"),
+  width = 12,
+  height = 6)
+```
+
+We can see that the emulsion_LISI score has significantly increased after Harmony correction, indicating improved batch mixing and successful correction of batch effects. However, the condition_LISI score has also increased, suggesting that some biological separation between conditions may have been lost during the batch correction process.
+
+<br>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
+
+# Communities detection {.tabset}
+
+
+
+
+
+
+
 
 # Weighted Nearest Neighbor (WNN) graph {.tabset}
 
