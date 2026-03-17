@@ -93,7 +93,10 @@ compare_metrics <- function(input_dirs, dataset_name, outdir, weights = c(iMetri
     )
   
   ggsave(file.path(save_dir,
-                   "metric_comparison.png"), p1, width=8, height=6)
+                   "metric_comparison.png"), p1, width=8, height=6, dpi=300)
+  
+  ggsave(file.path(save_dir,
+                   "metric_comparison.pdf"), p1, width=8, height=6)
   
   p2 <- ggplot(combined, aes(x=Batch_mixing_global, y=Condition_mixing_global, label=method)) +
     geom_point_rast(aes(color = Score_integration_global), size = 4) +
@@ -112,7 +115,10 @@ compare_metrics <- function(input_dirs, dataset_name, outdir, weights = c(iMetri
     )
   
   ggsave(file.path(save_dir,
-                   "metric_comparison_iMetric.png"), p2, width=8, height=6)
+                   "metric_comparison_iMetric.png"), p2, width=8, height=6, dpi=300)
+  
+  ggsave(file.path(save_dir,
+                   "metric_comparison_iMetric.pdf"), p2, width=8, height=6)
   
   p3 <- ggplot(combined, aes(x=reorder(method, Score_integration_global), y=Score_integration_global, fill=Score_integration_global)) +
     geom_col() +
@@ -122,7 +128,10 @@ compare_metrics <- function(input_dirs, dataset_name, outdir, weights = c(iMetri
     labs(x="Méthode", y="Score Global", title="Synthèse des méthodes")
   
   ggsave(file.path(save_dir,
-                   "metric_comparison_bar.png"), p3, width=8, height=6)
+                   "metric_comparison_bar.png"), p3, width=8, height=6, dpi=300)
+  
+  ggsave(file.path(save_dir,
+                   "metric_comparison_bar.pdf"), p3, width=8, height=6)
   
   return(list(combined_table=combined, best_method=best_model))
 }

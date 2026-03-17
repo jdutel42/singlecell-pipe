@@ -78,6 +78,14 @@ run_knn_purity <- function(input_dir, dataset_name, batch_col, condition_col, ou
     file.path(save_dir,"knn_purity_comparison.png"),
     p,
     width=7,
+    height=5,
+    dpi=300
+  )
+  
+  ggsave(
+    file.path(save_dir,"knn_purity_comparison.pdf"),
+    p,
+    width=7,
     height=5
   )
   

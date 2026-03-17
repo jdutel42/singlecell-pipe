@@ -112,6 +112,14 @@ run_lisi <- function(input_dir, dataset_name, batch_col, outdir, condition_col) 
     file.path(save_dir,"lisi_comparison.png"),
     p,
     width=7,
+    height=5,
+    dpi=300
+  )
+  
+  ggsave(
+    file.path(save_dir,"lisi_comparison.pdf"),
+    p,
+    width=7,
     height=5
   )
   

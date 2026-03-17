@@ -1634,6 +1634,8 @@ seu_QC <- qread(file.path(DIR_DATA, "Processed_data", "04_hd_mm_scrnaseq_tcell_n
 
 ## Harmony {.tabset}
 
+### Tuning parameters {.tabset}
+
 ```{r batch correction harmony, echo=FALSE}
 
 log_dir <- file.path(DIR_LOG, "batch_correction", "harmony")
@@ -1715,13 +1717,49 @@ callr::rscript(
 ```
 
 
-
-
-
-
 ::: callout-tip
 Ideally, test different batch correction methods (e.g., Harmony, Seurat's integration, MNN) and evaluate their impact on downstream analyses (PCA, UMAP, clustering) to find the optimal method for dataset.
 :::
+
+If I want to test different batch correction methods (e.g., Harmony, Seurat's integration, MNN), I can run them in parallel and then compare their performance using metrics like LISI score and KNN purity. This will allow me to evaluate the effectiveness of each method in integrating the data while preserving biological variation, and ultimately choose the optimal method for my dataset.
+For that I only have to rerun the first script here (not armony_gridsearch.R but the one with the method I want to test) and then run the scripts for computing LISI and KNN metrics, and finally the comparison script to visualize the results.
+
+### Final correction {.tabset}
+
+```{r final correction, echo=FALSE}
+
+log_dir <- file.path(DIR_LOG, "batch_correction", "final")
+dir.create(log_dir, recursive = TRUE, showWarnings = FALSE)
+
+callr::rscript(
+  script = file.path(DIR_SCRIPT, "function", "batch_correction", "tool", "harmony_simple.R"),
+  cmdargs = c(
+    "-i", file.path(DIR_DATA, "Processed_data", "04_hd_mm_scrnaseq_tcell_normalized_seurat.qs"),
+    "-d", "All_Tcells",
+    "-b", "emulsion",
+    "-D", 11,
+    "-t", 1,
+    "-S", 0.05,
+    "-o", DIR_RESULT,
+    "-s", file.path(DIR_DATA, "Processed_data", "05_hd_mm_scrnaseq_tcell_batch_corrected_seurat.qs")
+  ),
+  stdout = file.path(DIR_LOG, "batch_correction", "final", paste0("output_batch_correction_final_", log_time, ".log")),
+  stderr = file.path(DIR_LOG, "batch_correction", "final", paste0("error_batch_correction_final_", log_time, ".log"))
+)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
 
 ::: callout-tip
 Test LISI score also BEFORE and AFTER batch correction to quantitatively evaluate the effectiveness of the batch correction method in integrating the data while preserving biological variation.
@@ -2044,7 +2082,46 @@ ggsave(
     "Harmony",
     "All_Tcell_RNA_Harmony_LISI_scores_comparison.png"),
   width = 12,
+  height = 6,
+  dpi = 300)
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_LISI_scores_comparison.pdf"),
+  width = 12,
   height = 6)
+
+ggplot(df, aes(type, score, fill = type)) +
+  geom_boxplot() +
+  facet_wrap(~var, scales = "free_y") +
+  theme_classic() +
+  NoLegend() +
+  ggtitle("LISI scores before and after Harmony correction") +
+  labs(y = "LISI Score (Mixing/Integration)")
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_LISI_scores_comparison_boxplot.png"),
+  width = 12,
+  height = 6,
+  dpi = 300)
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Harmony",
+    "All_Tcell_RNA_Harmony_LISI_scores_comparison_boxplot.pdf"),
+  width = 12,
+  height = 6
+  )
+
 ```
 
 We can see that the emulsion_LISI score has significantly increased after Harmony correction, indicating improved batch mixing and successful correction of batch effects. However, the condition_LISI score has also increased, suggesting that some biological separation between conditions may have been lost during the batch correction process.
