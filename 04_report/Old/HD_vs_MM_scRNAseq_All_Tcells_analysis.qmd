@@ -2142,7 +2142,7 @@ k_values   <- c(20, 30, 40)
 res_values <- seq(0.2, 1.0, by = 0.2)
 grid       <- expand.grid(k = k_values, resolution = res_values)
 
-base_dir <- file.path(DIR_RESULT, "All_Tcells", "Clustering", "Tuning_k_res")
+base_dir <- file.path(DIR_RESULT, "All_Tcells", "Community_detection", "Tuning_k_res")
 dir.create(base_dir, recursive = TRUE, showWarnings = FALSE)
 
 all_results <- future_map_dfr(
@@ -2212,6 +2212,10 @@ write.csv(all_results,
 plan(multicore, workers = parallel::detectCores() - 1)
 
 run_and_save_parallel <- function(params, seu, dims_use, base_dir) {
+  
+  # ============================================================
+  # Parameters definition
+  # ============================================================
 
   k <- params$k
   resolution <- params$resolution
