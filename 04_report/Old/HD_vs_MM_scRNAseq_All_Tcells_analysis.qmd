@@ -1831,7 +1831,7 @@ Ideally, test different batch correction methods (e.g., Harmony, Seurat's integr
 If I want to test different batch correction methods (e.g., Harmony, Seurat's integration, MNN), I can run them in parallel and then compare their performance using metrics like LISI score and KNN purity. This will allow me to evaluate the effectiveness of each method in integrating the data while preserving biological variation, and ultimately choose the optimal method for my dataset.
 For that I only have to rerun the first script here (not armony_gridsearch.R but the one with the method I want to test) and then run the scripts for computing LISI and KNN metrics, and finally the comparison script to visualize the results.
 
-## Final correction {.tabset}
+## Optimal {.tabset}
 
 ```{r final correction, echo=FALSE}
 
@@ -1990,834 +1990,89 @@ results <- run_grid_search(
 )
 ```
 
+Manually look at result and determine the best combinaison
+
+```{r best combinaison}
+best_combinaison_k_dim <- "k40_11dims"
+best_combinaison_res <- "res_0.05"
+
+# Charge le meilleur clustering (par exemple, k=30, res=0.2, dims=1:11)
+optimal_k_dim_dir <- file.path(DIR_RESULT, "All_Tcells", "Community_detection", "grid_test", best_combinaison_k_dim)
+
+optimal_res_dir <- file.path(DIR_RESULT, "All_Tcells", "Community_detection", "grid_test", best_combinaison_k_dim, best_combinaison_res)
+
+optimal_clustree_dir <- file.path(optimal_k_dim_dir, "Clustree")
+
+img_optimal_clustree_files <- list.files(optimal_clustree_dir, pattern = "\\.png$", recursive = TRUE, full.names = TRUE)
+
+for (img in img_optimal_clustree_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+img_optimal_k_dim_res_files <- list.files(optimal_res_dir, pattern = "\\.png$", recursive = TRUE, full.names = TRUE)
+
+for (img in img_optimal_k_dim_res_files) {
+
+  print(knitr::include_graphics(img))
+
+}
+
+```
 
 
+## Optimal {.tabset}
 
+```{r optimal clustering}
+seu_path <- file.path(DIR_DATA, "Processed_data", "05_hd_mm_scrnaseq_tcell_batch_corrected_seurat.qs")
+seu_before_community_detected <- qread(seu_path)
 
+optimal_dims_list <- list(1:11, 1:11)
+optimal_k <- 40
+optimal_res <- 0.05
 
-
-
-```{r Clusters stability optimization workflow}
-plan(multicore, workers = parallel::detectCores() - 1)
-
-run_and_save_parallel <- function(params, seu, dims_use, base_dir) {
-  
-  # ============================================================
-  # Parameters definition
-  # ============================================================
-
-  k <- params$k
-  resolution <- params$resolution
-
-  message("Running k=", k, " res=", resolution)
-
-  seu_tmp <- seu
-
-  # seu_tmp <- FindNeighbors(
-  #   seu_tmp,
-  #   reduction = "harmony",
-  #   dims = dims_use,
-  #   k.param = k,
-  #   verbose = FALSE
-  # )
-
-  seu_tmp <- FindMultiModalNeighbors(seu_tmp,
-                               reduction.list = list("harmony", "apca"),
-                               dims.list = dims_list,
-                               k.nn = k,
-                               verbose = TRUE)
-
-  seu_tmp <- FindClusters(
-    seu_tmp,
-    resolution = resolution,
+seu_community_detected <- seu_before_community_detected %>% 
+  FindMultiModalNeighbors(
+    .,
+    reduction.list = list("harmony", "apca"),
+    dims.list      = optimal_dims_list,
+    k.nn           = optimal_k,
+    verbose        = FALSE
+  ) %>% 
+  FindClusters(
+    .,
+    resolution = optimal_res,
     graph.name = "wsnn",
-    verbose = FALSE
-  )
+    algorithm  = 4,      # Leiden — plus stable que Louvain pour scRNA-seq
+    verbose    = FALSE
+  ) %>% 
+  RunUMAP(
+      .,
+      nn.name = "weighted.nn",
+      reduction      = "harmony",
+      reduction.name = "umap",
+      verbose = FALSE
+    )
 
-  seu_tmp <- RunUMAP(
-    seu_tmp,
-    reduction = "harmony",
-    dims = dims_use,
-    verbose = FALSE
-  )
-
-  clust <- as.integer(Idents(seu_tmp))
-  emb <- Embeddings(seu_tmp, "harmony")[, dims_use]
-
-  sil <- silhouette(clust, dist(emb))
-
-  sil_df <- data.frame(
-    sil = sil[, "sil_width"],
-    cluster = factor(clust)
-  )
-
-  mean_sil <- mean(sil_df$sil)
-  prop_neg <- mean(sil_df$sil < 0)
-  n_clusters <- length(unique(clust))
-
-  # Choisir palette adaptée
-  fill_colors <- if (n_clusters <= length(pal)) {
-    pal[1:n_clusters]
-  } else {
-    colors_55[1:n_clusters]
-  }
-
-  param_name <- paste0("k", k,
-                       "_res", resolution,
-                       "_dims", min(dims_use), "-", max(dims_use))
-
-  param_dir <- file.path(base_dir, param_name)
-  dir.create(param_dir, showWarnings = FALSE)
-
-  # # --- Clust tree ---
-  # clustree(seu_tmp, prefix = "wsnn_res.")
-  #
-  # dir.create(
-  #   file.path(DIR_RESULT,
-  #             "CD4_Tcells",
-  #             "Clustering"),
-  #   recursive = TRUE,
-  #   showWarnings = FALSE)
-  #
-  # ggsave(
-  #   filename = file.path(
-  #     param_dir,
-  #     "Clustree_WNN.png"),
-  #   width = 12,
-  #   height = 12)
-
-  # ---- Plot violin ----
-  p1 <- ggplot(sil_df,
-               aes(x = cluster, y = sil, fill = cluster)) +
-    geom_violin(trim = FALSE) +
-    geom_boxplot(width = 0.1, fill = "white") +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-    theme_minimal() +
-    labs(title = paste0("k=", k,
-                        " res=", resolution,
-                        "\nmean_sil=", round(mean_sil, 3),
-                        " neg=", round(prop_neg, 3)),
-         x = "Cluster",
-         y = "Silhouette width") +
-  scale_fill_manual(values = fill_colors)
-
-  ggsave(file.path(param_dir, "silhouette_violin.png"),
-         p1, width = 8, height = 6, dpi = 300)
-
-  # ---- Histogram ----
-  all_silouhette <-
-    ggplot(sil_df, aes(x = sil, fill = cluster)) +
-      geom_histogram(bins = 100, alpha = 0.7, position = "identity") +
-      geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
-      theme_minimal() +
-      labs(x = "Silhouette width", y = "Cell count", fill = "Cluster") +
-      scale_fill_manual(values = fill_colors)
-  all_silouhette
-
-  ggsave(
-    plot = all_silouhette,
-    file.path(
-      param_dir,
-      "silhouette_hist.png"),
-    width = 8,
-    height = 6, dpi = 300)
-
-  # --- Plot mean silhouette per cluster ----
-  mean_sil <- sil_df %>%
-  group_by(cluster) %>%
-  summarise(mean_sil = mean(sil))
-
-  mean_silouhette <- ggplot(mean_sil, aes(x = cluster, y = mean_sil, fill = cluster)) +
-    geom_col() +
-    geom_hline(yintercept = 0, linetype = "dashed") +
-    theme_minimal() +
-    labs(x = "Cluster", y = "Mean silhouette width") +
-    scale_fill_manual(values = fill_colors)
-  mean_silouhette
-
-  ggsave(
-    plot = mean_silouhette,
-    filename =
-      file.path(
-        param_dir,
-        "Silhouette_mean_width_per_cluster.png"),
-    width = 12,
-    height = 6)
-
-  # --- Plot silhouette classic ----
-  png(filename = file.path(
-      param_dir,
-      "Silhouette_classic_plot.png"),
-      width = 2000,
-      height = 1500,
-      res = 300)
-
-  classic_silouhette <- plot(sil, border = NA)
-  classic_silouhette
-
-  dev.off()
-
-  # --- UMAP colored by silhouette width ----
-  seu_tmp$silhouette <- sil[, "sil_width"]
-  p_umap_silhouette <- FeaturePlot(
-    seu_tmp,
-    features = "silhouette",
-    cols = c("blue", "white", "red"),
-    order = TRUE
-  ) + ggtitle(paste0("k=", k, " res=", resolution))
-
-  ggsave(
-    plot = p_umap_silhouette,
-    filename = file.path(
-      param_dir,
-      "UMAP_silhouette.png"),
-    width = 12,
-    height = 6)
-
-  # --- UMAP Density colored by cluster ----
-  df <- as.data.frame(
-    Embeddings(seu_tmp, "umap")
-  )
-
-  colnames(df) <- c("UMAP_1", "UMAP_2")
-
-  # Ajouter metadata utile
-  df$condition    <- seu_tmp$condition
-  # df$BCL6_status  <- seu_tmp$BCL6_status
-  df$seurat_cluster <- seu_tmp$seurat_clusters
-
-
-  p_umap_density_clusters <- ggplot(df, aes(UMAP_1, UMAP_2)) +
-    # Points colorés par cluster
-    geom_point(
-      aes(color = seurat_cluster),
-      size = 0.5,
-      alpha = 0.6
-    ) +
-    scale_color_manual(values = fill_colors) +
-
-    # Contours en arrière-plan (structure globale)
-    stat_density_2d(
-      bins = 14,
-      contour_var = "density",
-      color = "black",
-      linewidth = 0.2,
-      h = c(0.8, 0.8)
-    ) +
-
-    coord_equal() +
-    labs(title = "UMAP density plot of CD4 T cells",
-         x = "UMAP 1",
-         y = "UMAP 2",
-         color = "Cluster") +
-
-    theme_classic(base_size = 12) +
-    theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      axis.text.y = element_text(angle = 45, hjust = 1),
-      legend.title = element_text(size = 14, face = "bold"),    # taille + gras du titre
-      legend.text  = element_text(size = 12)
-    ) +
-
-    # Agrandir les points dans la légende
-    guides(color = guide_legend(
-      override.aes = list(size = 4)  # taille des symboles dans la légende
-    ))
-  p_umap_density_clusters
-
-  ggsave(
-    plot = p_umap_density_clusters,
-    filename = file.path(
-      param_dir,
-      "UMAP_density_clusters.png"),
-    width = 12,
-    height = 6)
-
-
-
-
-  # --- Return results ----
-
-  return(data.frame(
-    k = k,
-    resolution = resolution,
-    n_clusters = n_clusters,
-    mean_sil = mean_sil,
-    prop_negative = prop_neg
-  ))
-}
-
-dims_list <- list(1:13, 1:13)
-dims_use <- 1:13
-
-k_values <- c(20, 30, 40)
-res_values <- seq(0.2, 1.0, by = 0.2)
-
-grid <- expand.grid(k = k_values,
-                    resolution = res_values)
-
-base_dir <- file.path(DIR_RESULT, "CD4_Tcells", "Clustering", "Tuning_k_res")
-
-dir.create(
-  file.path(base_dir),
-  recursive = TRUE,
-  showWarnings = FALSE)
-
-all_results <- future_map_dfr(
-  split(grid, seq(nrow(grid))),
-  run_and_save_parallel,
-  seu = seu_CD4_QC_Moderate,
-  dims_use = dims_use,
-  base_dir = base_dir,
-  .options = furrr_options(seed = TRUE)
+qsave(
+  seu_community_detected,
+  file.path(DIR_DATA, "Processed_data", "06_hd_mm_scrnaseq_tcell_community_detected_seurat.qs")
 )
 
+seu_community_detected <- qread(
+  file.path(DIR_DATA, "Processed_data", "06_hd_mm_scrnaseq_tcell_community_detected_seurat.qs"))
 ```
 
 
+# Annotation {.tabset}
 
+Let's try to annotate our clusters based on the expression of known marker genes for CD4 T cell subpopulations. We can use the FeaturePlot function to visualize the expression of these marker genes on the UMAP plot and see if they are enriched in specific clusters. We can also look at the average expression of these marker genes in each cluster to further characterize their identity and function.
 
+:::::::::: panel-tabset
+## FeaturePlot CITE-seq + RNA {.tabset}
 
-
-# Weighted Nearest Neighbor (WNN) graph {.tabset}
-
-```{r WNN}
-seu <- FindMultiModalNeighbors(seu,
-                               reduction.list = list("harmony", "apca"),
-                               dims.list = list(1:9, 1:13))
-```
-
-# UMAP {.tabset}
-
-## Tuning {.tabset}
-
-```{r Tuning UMAP}
-# Dir  to save
-dir.create(
-  file.path(DIR_RESULT,
-            "All_Tcells",
-            "UMAP",
-            "Tuning"),
-  recursive = TRUE,
-  showWarnings = FALSE)
-
-params <- expand.grid(
-  n.neighbors = c(40),
-  min.dist    = c(0.04, 0.05, 0.06, 0.07, 0.08, 0.09),
-  spread      = c(1.5, 2)
-)
-
-for (i in seq_len(nrow(params))) {
-
-  md <- params$min.dist[i]
-  sp <- params$spread[i]
-  nn <- params$n.neighbors[i]
-
-  red_name <- paste0("umap_md", md, "_sp", sp, "_nn", nn)
-
-  seu <- RunUMAP(
-    seu,
-    nn.name     = "weighted.nn",
-    min.dist    = md,
-    spread      = sp,
-    n.neighbors = nn,
-    seed.use    = 42,
-    reduction.name = red_name
-  )
-
-  p <- DimPlot(
-    seu,
-    reduction = red_name,
-    group.by  = "predicted.celltype.l2") +
-    ggtitle(paste("min.dist =", md,
-                  "spread =", sp,
-                  "n.neighbors =", nn)) +
-    scale_color_manual(values = pal)
-
-  ggsave(
-    plot = p,
-    filename = file.path(
-      DIR_RESULT,
-      "All_Tcells",
-      "UMAP",
-      "Tuning",
-      paste0(red_name, ".png")
-    ),
-    width = 12,
-    height = 6
-  )
-}
-
-```
-
-## Run {.tabset}
-
-```{r Run UMAP}
-seu <- RunUMAP(seu,
-               nn.name = "weighted.nn",
-               min.dist = 0.06,
-               spread = 1.0,
-               n.neighbors = 50,
-               seed.use = 42)
-```
-
-## Visualization {.tabset}
-
-```{r Viz UMAP}
-# Visualization
-metadata <- c("condition", "source", "id", "predicted.celltype.l1", "predicted.celltype.l2", "predicted.celltype.l3")
-
-
-dir.create(
-  file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "UMAP",
-    "Metadata"),
-  recursive = TRUE,
-  showWarnings = FALSE)
-
-for (meta in metadata) {
-  p <- DimPlot(seu, reduction = "umap", group.by = meta) + ggtitle(meta)
-  
-  print(p)
-  
-  # Nom de fichier
-  file_name <- paste0(output_dir, "/UMAP_metadata_", meta, ".png")
-
-  ggsave(file_name, plot = p, width = 6, height = 5)
-  
-  ggsave(
-    filename = file.path(
-      DIR_RESULT,
-      "All_Tcells",
-      "UMAP",
-      "Metadata",
-      paste0("UMAP_metadata_", meta, ".pdf")
-    ),
-    plot = p,
-    width = 6,
-    height = 5
-  )
-}
-```
-
-# Clustering {.tabset}
-
-## Test several clustering resolutions {.tabset}
-
-```{r FindClusters}
-# # Clustering (commun RNA + ADT on WNN graph)
-# Explore different resolutions
-resolutions <- seq(0.01, 0.1, by = 0.01)
-for (res in resolutions) {
-  seu <- FindClusters(seu, graph.name = "wsnn", resolution = res, verbose = FALSE)
-}
-```
-
-## Visualization {.tabset}
-
-```{r Viz clusters (Clustree)}
-clustree(seu, prefix = "wsnn_res.")
-
-dir.create(
-  file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering"),
-  recursive = TRUE,
-  showWarnings = FALSE)
-
-ggsave(
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering",
-    "Clustree_WNN.pdf"),
-  width = 10,
-  height = 8
-)
-```
-
-## Optimal resolution {.tabset}
-
-```{r Choose opti res}
-# Choose resolution 0.06
-seu$seurat_clusters <- seu$wsnn_res.0.1
-
-# Reorganize clusters names
-seu$seurat_clusters <- factor(seu$seurat_clusters, 
-                              levels = names(sort(table(seu$seurat_clusters), 
-                                                  decreasing = TRUE)))
-```
-
-## Clusters on UMAP {.tabset}
-
-```{r Clusters on UMAP}
-DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat_clusters")
-
-# Save the plot
-ggsave(
-  plot = last_plot(),
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering",
-    "UMAP_seurat_clusters.pdf"),
-  width = 12,
-  height = 6)
-
-ggsave(
-  plot = last_plot(),
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "UMAP",
-    "Metadata",
-    "UMAP_seurat_clusters.pdf"),
-  width = 12,
-  height = 6)
-
-DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat clusters") +
-  facet_wrap(~seurat_clusters)
-
-ggsave(
-     plot = last_plot(),
-     filename = file.path(
-       DIR_RESULT,
-       "All_Tcells",
-       "Clustering",
-       "UMAP_seurat_clusters_facet.pdf"),
-     width = 12,
-     height = 6)
-
-ggsave(
-  plot = last_plot(),
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "UMAP",
-    "Metadata",
-    "UMAP_seurat_clusters_facet.pdf"),
-  width = 12,
-  height = 6)
-```
-
-#### UMAP density per cluster {.tabset}
-
-```{r UMAP density per cluster}
-### UMAP density
-
-df <- as.data.frame(
-  Embeddings(seu_CD8_QC_Moderate, "umap")
-)
-
-colnames(df) <- c("UMAP_1", "UMAP_2")
-
-# Ajouter metadata utile
-df$condition    <- seu_CD8_QC_Moderate$condition
-df$BCL6_status  <- seu_CD8_QC_Moderate$BCL6_status
-df$seurat_cluster <- seu_CD8_QC_Moderate$seurat_clusters
-
-
-p_umap_density_clusters <- ggplot(df, aes(UMAP_1, UMAP_2)) +
-  # Points colorés par cluster
-  geom_point(
-    aes(color = seurat_cluster),
-    size = 0.5,
-    alpha = 0.6
-  ) +
-  scale_colour_manual(values = pal) +
-  
-  # Contours en arrière-plan (structure globale)
-  stat_density_2d(
-    bins = 14,
-    contour_var = "density",
-    color = "black",
-    linewidth = 0.2,
-    h = c(0.8, 0.8)
-  ) +
-  
-  coord_equal() +
-  labs(title = "UMAP density plot of CD8 T cells",
-       x = "UMAP 1",
-       y = "UMAP 2",
-       color = "Cluster") +
-  
-  theme_classic(base_size = 12) +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    axis.text.y = element_text(angle = 45, hjust = 1),
-    legend.title = element_text(size = 14, face = "bold"),    # taille + gras du titre
-    legend.text  = element_text(size = 12)
-  ) +
-  
-  # Agrandir les points dans la légende
-  guides(color = guide_legend(
-    override.aes = list(size = 4)  # taille des symboles dans la légende
-  ))
-p_umap_density_clusters
-
-ggsave(
-  plot = p_umap_density_clusters,
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering",
-    "UMAP_seurat_clusters_density.png"),
-  width = 12,
-  height = 6)
-
-ggsave(
-  plot = p_umap_density_clusters,
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "UMAP",
-    "Metadata",
-    "UMAP_seurat_clusters_density.pdf"),
-  width = 12,
-  height = 6)
-```
-
-## Clusters quality {.tabset}
-
-### QC metrics per cluster {.tabset}
-
-```{r QC metrics per clusters}
-VlnPlot(
-  seu,
-  features = c("nFeature_RNA", "nCount_RNA", "percent.mt"),
-  group.by = "seurat_clusters",
-  pt.size = 0,
-  ncol = 3
-)
-
-ggsave(
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering",
-    "Clusters_QC_metrics.pdf"),
-  width = 12,
-  height = 6)
-```
-
-nCount_RNA: Library size
-
-nFeature_RNA: Library complexity
-
-percent.mt: Mitochondrial content
-
-### Libraries size per cluster {.tabset}
-
-```{r Libsize per clusters}
-# Plot number of cells per cluster with percentage labels of total cells
-cell_counts <- seu@meta.data %>%
-  count(seurat_clusters, name = "Cell_Count") %>%
-  mutate(
-    Percentage = round(100 * Cell_Count / sum(Cell_Count), 6),
-    label = paste0(Percentage, "%")
-  )
-
-
-ggplot(cell_counts, aes(y = seurat_clusters, x = Cell_Count, fill = seurat_clusters)) +
-  geom_col() +
-  geom_text(aes(label = label), hjust = -0.1, size = 3) +
-  theme_minimal() +
-  labs(
-    title = "Number (and %) of cells per cluster",
-    x = "Number of cells",
-    y = "Cluster"
-  ) +
-  theme(legend.position = "none")
-
-# Save the plot
-ggsave(
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering",
-    "Clusters_cell_counts.pdf"),
-  width = 8,
-  height = 6
-)
-```
-
-## Cluster repartition per patients {.tabset}
-
-```{r Clusters repartition per patients}
-# Proportion of cells per cluster for each patient
-cluster_patient <- seu@meta.data %>%
-  group_by(id, seurat_clusters) %>%
-  summarise(Cell_Count = n()) %>%
-  group_by(id) %>%
-  mutate(Percentage = Cell_Count / sum(Cell_Count) * 100)
-
-ggplot(cluster_patient, aes(x = id, y = Percentage, fill = seurat_clusters)) +
-  geom_bar(stat = "identity", position = "fill") +
-  scale_y_continuous(labels = scales::percent_format()) +
-  labs(
-    title = "Proportion of cells per cluster for each patient",
-    x = "Patient ID",
-    y = "Proportion of cells",
-    fill = "Cluster"
-  ) + 
-  theme(
-      axis.text.x = element_text(angle = 45, 
-                                 hjust = 1, 
-                                 vjust = 1))
-
-# Save the plot
-ggsave(
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering",
-    "Clusters_repartition_per_patient.pdf"),
-  width = 12,
-  height = 6
-)
-```
-
-### Mitochondrial content per cluster {.tabset}
-
-```{r Mito per clusters}
-stats_mt <- seu@meta.data %>%
-  group_by(seurat_clusters) %>%
-  summarise(
-    mean_pct_mt   = mean(percent.mt),
-    median_pct_mt = median(percent.mt),
-    sd_pct_mt     = sd(percent.mt)
-  )
-
-kable(stats_mt, format = "html") %>%
-  kable_styling()
-
-# Save the table
-write.csv(stats_mt, 
-          file = file.path(
-            DIR_RESULT,
-            "All_Tcells",
-            "Clustering",
-            "cluster_mitochondrial_content_stats.csv"),
-          row.names = FALSE)
-```
-
-```{r Viz Mito per clusters}
-ggplot(seu@meta.data,
-       aes(
-         x = percent.mt,
-         y = seurat_clusters,
-         fill = seurat_clusters
-       )) +
-  geom_density_ridges(
-    alpha = 0.7,
-    scale = 1.2,
-    rel_min_height = 0.01,
-    color = "white") +
-  # theme_ridges() +
-  # theme(
-  #   legend.position = "none"
-  # ) +
-  # geom_vline(xintercept = 20, linetype = "dashed", color = "red") +
-  labs(
-    x = "% mitochondrial genes",
-    y = "Clusters")
-
-ggsave(
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering",
-    "Clusters_mitochondrial_content_ridges.pdf"),
-  width = 12,
-  height = 6
-)
-```
-
-Too few cells in clusters 10 to be seen
-
-<!-- Mitcochondrial content on UMAP -->
-
-<!-- ```{r} -->
-
-<!-- FeaturePlot( -->
-
-<!--   seu, -->
-
-<!--   features = "percent.mt", -->
-
-<!--   cols = c("lightgrey", "red"), -->
-
-<!--   reduction = "umap") -->
-
-<!-- ``` -->
-
-## Remove bad clusters {.tabset}
-
-```{r Remove bad clusters}
-# Remove clusters 
-seu <- subset(seu, 
-              subset = !(seurat_clusters %in% c("8", "9","10")))
-
-seu$seurat_clusters <- factor(seu$seurat_clusters)
-
-```
-
-```{r UMAP without bad clusters}
-DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat clusters after removing bad clusters")
-
-ggsave(
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "UMAP",
-    "Metadata",
-    "UMAP_seurat_clusters_after_removing_bad_clusters.pdf"),
-  width = 12,
-  height = 6
-) 
-
-ggsave(
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering",
-    "UMAP_seurat_clusters_after_removing_bad_clusters.pdf"),
-  width = 12,
-  height = 6
-)
-
-DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat clusters after removing bad clusters") +
-  facet_wrap(~seurat_clusters, ncol = (length(unique(seu$seurat_clusters))/2) )
-
-ggsave(
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "UMAP",
-    "Metadata",
-    "UMAP_seurat_clusters_after_removing_bad_clusters_facet.pdf"),
-  width = 12,
-  height = 6
-)
-
-ggsave(
-  filename = file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "Clustering",
-    "UMAP_seurat_clusters_after_removing_bad_clusters_facet.pdf"),
-  width = 12,
-  height = 6)
-```
-
-# Annotate clusters {.tabset}
-
-## FeaturePlot {.tabset}
-
-```{r FeaturePlot ADT}
+```{r CD4 FeaturePlot ADT}
 dict <- list(
   "CD16-TotalSeqB" = "FCGR3A",
   "CD335-NKp46-TotalSeqB" = "NCR1",
@@ -2834,61 +2089,80 @@ dict <- list(
 )
 
 dir.create(
-  file.path(
-    DIR_RESULT,
-    "All_Tcells",
-    "FeaturePlot",
-    "Prot_RNA_Clusters_FeaturePlot"),
+  file.path(DIR_RESULT,
+            "All_Tcells",
+            "Annotation",
+            "FeaturePlot",
+            "Prot_RNA_Clusters_FeaturePlot"),
   recursive = TRUE,
-  showWarnings = FALSE
-)
+  showWarnings = FALSE)
 
 for (prot in names(dict)) {
   gene <- dict[[prot]]
   
   # ADT plot
-  DefaultAssay(seu) <- "ADT"
-  p1 <- FeaturePlot(seu, features = prot, reduction = "umap") + ggtitle(paste0(prot, " (ADT)"))
+  DefaultAssay(seu_community_detected) <- "ADT"
+  p1 <- FeaturePlot(seu_community_detected, features = prot, reduction = "umap") + ggtitle(paste0(prot, " (ADT)"))
   
   # RNA plot
-  DefaultAssay(seu) <- "RNA"
+  DefaultAssay(seu_community_detected) <- "RNA"
   # Vérifie que le gène existe dans RNA
-  if (gene %in% rownames(seu[["RNA"]])) {
-    p2 <- FeaturePlot(seu, features = gene, reduction = "umap") + ggtitle(paste0(gene, " (RNA)"))
+  if (gene %in% rownames(seu_community_detected[["RNA"]])) {
+    p2 <- FeaturePlot(seu_community_detected, features = gene, reduction = "umap") + ggtitle(paste0(gene, " (RNA)"))
   } else {
     p2 <- ggplot() + 
       ggtitle(paste0(gene, " (RNA) - Not found")) + 
       theme_void()
   }
   
-  p3 <- DimPlot(seu, reduction = "umap", group.by = "seurat_clusters") + ggtitle("seurat_clusters")
+  p3 <- DimPlot(
+    seu_community_detected, 
+    reduction = "umap", 
+    group.by = "seurat_clusters") + 
+    ggtitle("seurat_clusters") +
+    scale_color_manual(values = pal)
   
   # Combine plots
   p <- (p1 | p2) / p3
-  p
+  print(p)
 
-
-  
   # Sauvegarde
   ggsave(
     filename = file.path(
       DIR_RESULT,
       "All_Tcells",
+      "Annotation",
       "FeaturePlot",
       "Prot_RNA_Clusters_FeaturePlot",
       paste0("Prot_RNA_Clusters_FeaturePlot_", prot, "_", gene, "_featureplot.png")),
     plot = p,
     width = 12,
-    height = 12)
+    height = 14)
 }
 ```
 
-# Clusters markers {.tabset}
+## Clusters markers {.tabset}
 
-## Find all markers {.tabset}
+Compute top10 markers for each cluster to see if they correspond to known CD4 T cell subpopulations and to further characterize their identity and function.
 
-```{r FindAllMarkers}
-markers <- FindAllMarkers(seu, only.pos = TRUE, min.pct = 0.25)
+### Run {.tabset}
+
+We use Find all markers function to find differentially expressed genes between clusters, and we filter the results to keep only significant markers with an adjusted p-value \< 0.05 and a log fold change \> 0.5n min percentage of cells expressing the gene in either cluster of at least 25%.
+
+```{r CD4 FindAllMarkers}
+Idents(seu_community_detected) <- "seurat_clusters"
+
+
+markers <- FindAllMarkers(
+  seu_community_detected, 
+  test.use = "wilcox",
+  assay = "SCT",
+  slot = "data",
+  only.pos = FALSE, 
+  min.pct = 0.25,
+  # latent.vars = c("nCount_RNA", "emulsion", "percent.mt", "Phase"),
+  verbose = TRUE,
+  random.seed = 42)
 
 markers_filt <- markers %>%
   filter(
@@ -2898,26 +2172,36 @@ markers_filt <- markers %>%
   )
 ```
 
-## Top 10 markers per cluster {.tabset}
+#### Pull Top 10 markers {.tabset}
 
-```{r Top10 markers}
-genes.scaled <- rownames(seu[["RNA"]]@scale.data)
+```{r CD4 Top10 markers}
+# genes.scaled <- rownames(seu_community_detected[["RNA"]]@scale.data)
 
 top10 <- markers_filt %>%
-  filter(gene %in% genes.scaled) %>%
+  # filter(gene %in% genes.scaled) %>%
   group_by(cluster) %>%
   slice_max(avg_log2FC, n = 10)
 
 top10 %>% arrange(cluster, desc(avg_log2FC))
+
+# If p_val and p_val_adj are 0.0000000000000, transform them to 1e-300 for better visualization
+top10 <- top10 %>%
+  mutate(
+    p_val = formatC(p_val, format = "e", digits = 3),
+    p_val_adj = formatC(p_val_adj, format = "e", digits = 3)
+  )
 ```
 
-##### FeaturePlot of top10 markers per cluster {.tabset}
+### Visualize
 
-```{r All FeaturePlot Top10}
+#### Feature {.tabset}
+
+```{r CD4 FeaturePlot Top10}
 dir.create(
   file.path(
     DIR_RESULT,
     "All_Tcells",
+    "Annotation",
     "FeaturePlot",
     "Top10_Markers_Per_Cluster"),
   recursive = TRUE,
@@ -2929,6 +2213,7 @@ for (i in unique(top10$cluster)) {
     file.path(
       DIR_RESULT,
       "All_Tcells",
+      "Annotation",
       "FeaturePlot",
       "Top10_Markers_Per_Cluster",
       paste0("Cluster_", i)),
@@ -2942,7 +2227,7 @@ for (i in unique(top10$cluster)) {
 
   p_list <- lapply(genes_cluster, function(gene) {
     FeaturePlot(
-      seu,
+      seu_community_detected,
       features = gene, 
       reduction = "umap") +
       # scale_color_gradient(low = "lightgrey", high = "red") +
@@ -2950,12 +2235,13 @@ for (i in unique(top10$cluster)) {
   })
 
   p_combined <- wrap_plots(p_list, ncol = 5)
-  p_combined
+  # print(p_combined)
   
   ggsave(
     filename = file.path(
       DIR_RESULT,
       "All_Tcells",
+      "Annotation",
       "FeaturePlot",
       "Top10_Markers_Per_Cluster",
       paste0("Cluster_", i),
@@ -2970,6 +2256,7 @@ for (i in unique(top10$cluster)) {
       file.path(
         DIR_RESULT,
         "All_Tcells",
+        "Annotation",
         "FeaturePlot",
         "Top10_Markers_Per_Cluster",
         paste0("Cluster_", i),
@@ -2978,19 +2265,20 @@ for (i in unique(top10$cluster)) {
       showWarnings = FALSE)
       
     violin <- VlnPlot(
-      seu, 
+      seu_community_detected, 
       cols = pal,
       features = gene, 
       group.by = "seurat_clusters", 
       pt.size = 0) +
       ggtitle(paste0("Cluster ", i, ": ", gene))
-    violin
+    # print(violin)
       
     ggsave(
       plot = violin,
       filename = file.path(
         DIR_RESULT,
         "All_Tcells",
+        "Annotation",
         "FeaturePlot",
         "Top10_Markers_Per_Cluster",
         paste0("Cluster_", i),
@@ -3001,16 +2289,17 @@ for (i in unique(top10$cluster)) {
       height = 4)
       
     feature <- FeaturePlot(
-      seu, 
+      seu_community_detected, 
       features = gene, 
       reduction = "umap") +
       ggtitle(paste0("Cluster ", i, ": ", gene))
-    feature
+    # print(feature)
     
     ggsave(
       filename = file.path(
         DIR_RESULT,
         "All_Tcells",
+        "Annotation",
         "FeaturePlot",
         "Top10_Markers_Per_Cluster",
         paste0("Cluster_", i),
@@ -3022,19 +2311,20 @@ for (i in unique(top10$cluster)) {
       height = 5)
       
     p_cluster <- DimPlot(
-      seu, 
+      seu_community_detected, 
       reduction = "umap", 
       group.by = "seurat_clusters") +
       scale_color_manual(values = pal)
-    p_cluster
+    # print(p_cluster)
       
     p_violin_feature_cluster <- (violin | feature) / p_cluster
-    p_violin_feature_cluster
+    print(p_violin_feature_cluster)
       
     ggsave(
       filename = file.path(
         DIR_RESULT,
         "All_Tcells",
+        "Annotation",
         "FeaturePlot",
         "Top10_Markers_Per_Cluster",
         paste0("Cluster_", i),
@@ -3048,20 +2338,24 @@ for (i in unique(top10$cluster)) {
 }
 ```
 
-## Heatmap of markers per cluster {.tabset}
+#### Heatmap {.tabset}
 
-```{r Heatmap Top10}
+::: callout-note
+Heatmap not so much interesting here
+:::
+
+```{r CD4 Heatmap Top10}
 genes <- unique(top10$gene)
 
 # Extract scaled data for the selected genes
 mat <- GetAssayData(
-  seu,
-  assay = "RNA",
+  seu_community_detected,
+  assay = "SCT",
   layer = "scale.data"
 )[genes, ]
 
 # Order cells by cluster
-clusters <- seu$seurat_clusters
+clusters <- seu_community_detected$seurat_clusters
 ord <- order(clusters)
 
 mat <- mat[, ord]
@@ -3089,6 +2383,7 @@ heatmap <- Heatmap(
   row_names_gp = grid::gpar(fontsize = 8),
   column_title = "Top 10 markers per cluster"
   )
+heatmap
 
 
 # Save heatmap
@@ -3096,120 +2391,391 @@ dir.create(
   file.path(
     DIR_RESULT,
     "All_Tcells",
+    "Annotation",
     "Heatmap"),
   recursive = TRUE,
   showWarnings = FALSE)
-  
+
+pdf(
+  file = file.path(
+    DIR_RESULT,
+    "All_Tcells",
+    "Annotation",
+    "Heatmap",
+    "Top10_Markers_Per_Cluster_Heatmap.pdf"
+  ),
+  width = 12,
+  height = 10
+)
+
 draw(heatmap)
+
+dev.off()
+
+
 png(
   filename = file.path(
     DIR_RESULT,
     "All_Tcells",
+    "Annotation",
     "Heatmap",
-    "Top10_Markers_Per_Cluster_Heatmap.png"),
-  width = 1200,
-  height = 800
+    "Top10_Markers_Per_Cluster_Heatmap.png"
+  ),
+  width = 2000,
+  height = 1600,
+  res = 300
 )
 
+draw(heatmap)
 
+dev.off()
 
 ```
 
-# Automatic annotation (SingleR) {.tabset}
+#### Volcano {.tabset}
 
-## Make automatic predictions {.tabset}
-
-```{r Run auto annot (SingleR)}
-# Prepare SingleR input
-sce <- as.SingleCellExperiment(seu, assay = "RNA")
-
-# Reference dataset
-ref <- fetchReference("monaco_immune", "2024-02-26")
-
-# Run SingleR
-predictions <- SingleR(
-  test = sce,
-  ref = ref,
-  labels = ref$label.fine,
-  assay.type.test = "logcounts")
-
-# Add predictions to Seurat object
-seu$predicted.celltype.l3_jordan <- predictions$pruned.labels
-```
-
-### Visualization of automatic annotations {.tabset}
-
-```{r Viz auto Annot}
-
+```{r CD4 Volcano plot Top10}
+# Volcano plot for each cluster
 dir.create(
   file.path(
     DIR_RESULT,
     "All_Tcells",
     "Annotation",
+    "Volcano_Plots"),
+  recursive = TRUE,
+  showWarnings = FALSE)
+
+
+for (i in unique(top10$cluster)) {
+
+  df <- markers %>%
+    filter(cluster == i) %>%
+    mutate(
+      Status = case_when(
+        p_val_adj < 0.05 & avg_log2FC >  0.5 ~ "Up",
+        p_val_adj < 0.05 & avg_log2FC < -0.5 ~ "Down",
+        TRUE ~ "NS"
+      )
+    )
+
+  # Top genes à annoter
+  top_up <- df %>%
+  filter(Status == "Up") %>%
+  arrange(desc(avg_log2FC)) %>%
+  slice_head(n = 10)
+
+  top_down <- df %>%
+    filter(Status == "Down") %>%
+    arrange(avg_log2FC) %>%   # plus négatif en premier
+    slice_head(n = 10)
+
+  top_genes <- bind_rows(top_up, top_down)
+
+  p <- ggplot(df, aes(avg_log2FC, -log10(p_val_adj))) +
+    geom_point(aes(color = Status), size = 1, alpha = 0.7) +
+
+    geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", color = "black") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+
+    geom_text_repel(
+      data = top_genes,
+      aes(label = gene),
+      size = 3,
+      max.overlaps = Inf
+    ) +
+
+    scale_color_manual(
+      values = c(
+        "Up"   = "#D62728",
+        "Down" = "#1F77B4",
+        "NS"   = "grey70"
+      )
+    ) +
+
+    labs(
+      title = paste("Volcano plot – Cluster", i),
+      subtitle = "DE genes vs rest",
+      x = "avg log2FC",
+      y = "-log10(adj p-value)",
+      color = "Regulation"
+    ) +
+
+    theme_classic(base_size = 12)
+
+  ggsave(
+    filename = file.path(
+      DIR_RESULT,
+      "All_Tcells",
+      "Annotation",
+      "Volcano_Plots",
+      paste0("Volcano_Cluster_", i, ".png")
+    ),
+    plot = p,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+}
+
+```
+
+
+```{r}
+# library(EnhancedVolcano)
+# EnhancedVolcano(
+#   markers,
+#   lab = markers$gene,
+#   x = 'avg_log2FC',
+#   y = 'p_val_adj',
+#   pCutoff = 0.05,
+#   FCcutoff = 0.5,
+#   pointSize = 2,
+#   labSize = 3,
+#   title = paste("Cluster", i)
+# )
+```
+
+## Automatic annotation (SingleR) {.tabset}
+
+::: callout-note
+We use an automatic annotations of clusters based on the SingleR package, which compares the gene expression profiles of our clusters to reference datasets of known cell types to assign putative identities to each cluster. This approach can help us identify the likely cell type or subpopulation represented by each cluster, providing insights into their potential biological functions and relevance in the context of our CD4 T cell dataset. By leveraging SingleR for automatic annotation, we can gain a deeper understanding of the cellular heterogeneity within our dataset and generate hypotheses about the roles of different CD4 T cell subpopulations in health and disease.
+:::
+
+### Make automatic predictions {.tabset}
+
+```{r CD4 Run auto annot (SingleR)}
+# Prepare SingleR input
+sce <- as.SingleCellExperiment(seu_community_detected, assay = "RNA")
+
+# Reference dataset
+ref <- fetchReference("monaco_immune", "2024-02-26")
+
+pred_l2 <- SingleR(
+  test = sce,
+  ref = ref,
+  # cluster = seu_community_detected$seurat_clusters,
+  labels = ref$label.main)
+
+pred_l3 <- SingleR(
+  test = sce,
+  ref = ref,
+  # cluster = seu_community_detected$seurat_clusters,
+  labels = ref$label.fine)
+
+
+
+seu_community_detected$predicted.celltype.l2_CD4_jordan <- pred_l2$pruned.labels
+seu_community_detected$predicted.celltype.l3_CD4_jordan <- pred_l3$pruned.labels
+```
+
+#### Visualization of automatic annotations {.tabset}
+
+```{r CD4 Viz auto Annot l2}
+dir.create(
+  file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
     "Automatic"),
   recursive = TRUE,
   showWarnings = FALSE)
 
-p1 <- DimPlot(seu, reduction = "umap", group.by = "predicted.celltype.l3_jordan") + ggtitle("predicted.celltype.l1")
+p1 <- DimPlot(
+  seu_community_detected, 
+  reduction = "umap", 
+  group.by = "predicted.celltype.l2_CD4_jordan") + 
+  # ggtitle("predicted.celltype.l2 for CD4 T cells (SingleR - Monaco reference)") +
+  scale_color_manual(values = pal)
+
 p1
+
 ggsave(
   filename = file.path(
     DIR_RESULT,
-    "All_Tcells",
+    "CD4_Tcells",
     "Annotation",
     "Automatic",
-    "UMAP_predicted_celltype_JD.png"),
+    "UMAP_predicted_celltype_l2_CD4_jordan.png"),
   plot = p1,
   width = 12,
-  height = 6
-)
+  height = 6)
 
-p2 <- DimPlot(seu, reduction = "umap", group.by = "predicted.celltype.l3_jordan") + ggtitle("predicted.celltype.l3_jordan") + 
-  facet_wrap(~predicted.celltype.l3_jordan, ncol = 6)
+
+p2 <- DimPlot(
+  seu_community_detected, 
+  reduction = "umap", 
+  group.by = "predicted.celltype.l2_CD4_jordan",
+  split.by = "predicted.celltype.l2_CD4_jordan") + 
+  scale_color_manual(values = pal) +
+  NoLegend()
 p2
+
 ggsave(
   filename = file.path(
     DIR_RESULT,
-    "All_Tcells",
+    "CD4_Tcells",
     "Annotation",
     "Automatic",
-    "UMAP_predicted_celltype_JD_facet.png"),
+    "UMAP_predicted_celltype_l2_CD4_jordan_facet.png"),
   plot = p2,
+  width = 15,
+  height = 10)
+
+p3 <- p1 | p2
+# p3
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
+    "Automatic",
+    "UMAP_predicted_celltype_l2_CD4_jordan_combined.png"),
+  plot = p3,
   width = 12,
-  height = 12
-)
+  height = 6)
+```
+
+```{r CD4 Viz auto Annot l3}
+dir.create(
+  file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
+    "Automatic"),
+  recursive = TRUE,
+  showWarnings = FALSE)
+
+p1 <- DimPlot(
+  seu_community_detected, 
+  reduction = "umap", 
+  group.by = "predicted.celltype.l3_CD4_jordan") + 
+  # ggtitle("predicted.celltype.l3 for CD4 T cells (SingleR - Monaco reference)") +
+  scale_color_manual(values = pal)
+
+p1
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
+    "Automatic",
+    "UMAP_predicted_celltype_l3_CD4_jordan.png"),
+  plot = p1,
+  width = 15,
+  height = 10)
+
+
+p2 <- DimPlot(
+  seu_community_detected, 
+  reduction = "umap", 
+  group.by = "predicted.celltype.l3_CD4_jordan") + 
+  scale_color_manual(values = pal) +
+  # ggtitle("Wrap predicted.celltype.l3 for CD4 T cells (SingleR - Monaco reference)") +
+  facet_wrap(~predicted.celltype.l3_CD4_jordan, ncol = round(length(unique(seu_community_detected$predicted.celltype.l3_CD4_jordan))/2)) + 
+  NoLegend()
+p2
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
+    "Automatic",
+    "UMAP_predicted_celltype_l3_CD4_jordan_facet.png"),
+  plot = p2,
+  width = 15,
+  height = 10)
 
 p3 <- p1 | p2
 p3
+
 ggsave(
   filename = file.path(
     DIR_RESULT,
-    "All_Tcells",
+    "CD4_Tcells",
     "Annotation",
     "Automatic",
-    "UMAP_predicted_celltype_JD_combined.pdf"),
+    "UMAP_predicted_celltype_l3_CD4_jordan_combined.png"),
   plot = p3,
-  width = 12,
-  height = 6
+  width = 15,
+  height = 10)
+```
+
+```{r}
+ct <- table( cluster = seu_community_detected$seurat_clusters, celltype_l3 = seu_community_detected$predicted.celltype.l3_CD4_jordan )
+
+ct_prop <- prop.table(ct, margin = 1) %>%
+  as.data.frame()
+
+ct_prop_wide <- ct_prop %>%
+  tidyr::pivot_wider(
+    names_from = celltype_l3,
+    values_from = Freq
+  )
+
+ct_prop_wide_fmt <- ct_prop_wide %>%
+  mutate(across(where(is.numeric), ~ round(.x * 100, 1)))
+
+datatable(
+  ct_prop_wide_fmt,
+  options = list(pageLength = 20, scrollX = TRUE),
+  rownames = FALSE,
+  caption = "Cluster Composition (%)"
 )
 ```
 
-# Manual annotation {.tabset}
+```{r CD4 Prop by celltype in condition Viz}
+props <- seu_community_detected@meta.data %>%
+  count(condition, predicted.celltype.l3_CD4_jordan) %>%
+  group_by(condition) %>%
+  mutate(prop = n / sum(n))
 
-## Create my celltype signatures {.tabset}
+ggplot(props,
+       aes(x = condition,
+           y = prop,
+           fill = predicted.celltype.l3_CD4_jordan)) +
+  scale_fill_manual(values = pal) +
+  stat_summary(fun = mean, geom = "bar", position = "stack")
 
-### Run presto to find markers {.tabset}
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
+    "Automatic",
+    "Proportion_celltype_l3_CD4_jordan_by_condition.png"),
+  width = 12,
+  height = 6)
+```
 
-```{r Run presto}
-expr_matrix <- as.matrix(seu@assays$RNA@data)
-labels <- seu$seurat_clusters
+There is no clear enrichment of specific cell types in one condition or the other, but we can see that some cell types are more abundant than others in our dataset.
+
+In this CD4 T cell dataset, automatic annotation found some cells that are CD8 T cells, which is not expected as we should only have CD4 T cells. That show that automatic annotation may sometimes not be perfect and can lead to misclassification of cell types.
+
+## Manual annotation {.tabset}
+
+In addition of automatic annotation, I can try to make my own manual annotation of clusters based on the expression of known marker genes for CD4 T cell subpopulations. I can use the FeaturePlot function to visualize the expression of these marker genes on the UMAP plot and see if they are enriched in specific clusters. I can also look at the average expression of these marker genes in each cluster to further characterize their identity and function.
+
+### Create my celltype signatures {.tabset}
+
+#### Run presto to find markers {.tabset}
+
+```{r CD4 Run presto}
+expr_matrix <- as.matrix(seu_community_detected@assays$RNA@data)
+labels <- seu_community_detected$seurat_clusters
 
 presto_markers <- wilcoxauc(expr_matrix, labels)
 ```
 
-### Construction of the signature table {.tabset}
+#### Construction of the signature table {.tabset}
 
-```{r Construct signature tibble}
+::: callout-tip
+I will update signatures by adding or removing genes from a signature. And why not adding some signatures if I find interesting ones in the literature or in other data. I plan to add a NK signature (work in progress)
+:::
+
+```{r CD4 Construct signature tibble}
 signature_tbl <- tribble(
   ~feature, ~cell_type, ~class,
   
@@ -3258,6 +2824,11 @@ signature_tbl <- tribble(
   "XCL1","Exhausted", "State",
   "XCL2","Exhausted", "State",
   "CD160","Exhausted", "State",
+  "ENTPD1","Exhausted", "State",
+  "CTLA4","Exhausted", "State",
+  "LAYN","Exhausted", "State",
+  "LILRB1","Exhausted", "State",
+  "CD38","Exhausted", "State",
 
   # HLA
   "HLA-DRA","HLA", "Function",
@@ -3323,7 +2894,7 @@ signature_tbl <- tribble(
   "TP53BP1","Senescent", "State",
   "CDKN1A","Senescent", "State",
   "CDKN2A","Senescent", "State",
-  "MKI67","Senescent", "State",
+  # "MKI67","Senescent", "State",
 
   # Tfh
   "IL21","Tfh", "Identity",
@@ -3362,43 +2933,68 @@ signature_tbl <- tribble(
   "TIGIT","Treg", "Identity",
   "IKZF2","Treg", "Identity",
   "CD27","Treg", "Identity",
-  "IL7R","Treg", "Identity"
+  "IL7R","Treg", "Identity",
+  
+  # CD8 Terminal Effector
+  "GZMK","CD8_Eff_Term", "Identity",
+  "ZEB2","CD8_Eff_Term", "Identity",
+  "EOMES","CD8_Eff_Term", "Identity",
+  "TBX21","CD8_Eff_Term", "Identity",
+  "PRDM1","CD8_Eff_Term", "Identity",
+  "CX3CR1","CD8_Eff_Term", "Identity",
+  "FGFBP2","CD8_Eff_Term", "Identity",
+  "KLRC1","CD8_Eff_Term", "Identity",
+  "KLRD1","CD8_Eff_Term", "Identity",
+
+  # TPEX (Precursor exhausted)
+  "TCF7","TPEX", "Identity",
+  "SLAMF6","TPEX", "Identity",
+  "CXCR5","TPEX", "Identity",
+  "PDCD1","TPEX", "Identity",
+  "BCL6","TPEX", "Identity",
+  
+  # NK
+  "NCAM1","NK", "Identity",
+  "KLRD1","NK", "Identity",
+  "NCR1","NK", "Identity",
+  "NCR3","NK", "Identity",
+  "KLRC1","NK", "Identity",
+  "KLRC2","NK", "Identity",
+  "KLRF1","NK", "Identity",
+  "TYROBP","NK", "Identity",
+  "FCER1G","NK", "Identity"
 )
+# ADD A NK SIGNATURE !!! (see Bineta) FCGR3A, NCR1, KLRF1, KLRC1, KLRC2, KLRC3, KLRC4, CLEC2B, CLEC4C, NCAM1, CD56, CD3E, CD3D, KLRCE... and more fun !
+
+
+# ADD Mitochondrial genes to apoptotic signature
 ```
 
-### Visualization of all signatures together {.tabset}
+###Visualization of manual signatures {.tabset}
 
-```{r}
-Tcell_signature <- "
-^CD3D$|^CD3E$|^CD4$|^TRBC1$|
-^FCGR3A$|^CD8A$|^CD8B$|^NCR1$|
-^CX3CR1$|^IFNG$|^TBX21$|^CXCR3$|^STAT4$|^IL12RB2$|
-^GATA3$|^CCR4$|^IL4$|^IL5$|^IL13$|
-^RORC$|^IL17A$|^CCR6$|^IL17F$|^IL23R$|
-^IL21$|^CXCR5$|^BCL6$|^PDCD1$|^ICOS$|
-^FOXP3$|^IL2RA$|^CTLA4$|^TIGIT$|^IKZF2$|^CD27$|^IL7R$|
-^PRF1$|^GZMB$|^GNLY$|^GZMH$|^CCL5$|^NKG7$|^KLRG1$|^GZMA$|
-^LAG3$|^TOX$|^CD226$|^GZMK$|^HAVCR2$|^XCL1$|^XCL2$|^CD160$|
-^B3GAT1$|^CD28$|^LAMP1$|^IL1A$|^FAS$|^TP53$|^TP53BP1$|^CDKN1A$|^CDKN2A$|^MKI67$|
-^CD69$|^CXCR6$|^NR4A2$|^RUNX3$|^TNFRSF9$|
-^CENPV$|^NCAPG$|^KIFC1$|^CENPE$|^ORC6$|
-^CCR7$|^SELL$|^TCF7$|^LEF1$|^Tcells4$|^PTPRC$|
-^MALAT1$|^NEAT1$|
-^IFIT2$|^IFIT3$|^ISG15$|^STAT1$|^IFI6$|^IRF7$|^MX1$|^IFITM3$|
-^TNFAIP3$|^NFKB1$|^NFKBIA$|^NFKBIZ$|
-^HLA-DRA$|^HLA-DRB1$
-"
+::: callout-warning
+Be careful, a white dot doesn't mean that the gene is not expressed in the cluster, it means that the average expression of the gene in the cluster is equal to the average expression of the gene in all clusters. So if a gene is expressed in all clusters at the same level, it will be white in this plot, even if it is expressed at a high level in all clusters.
+:::
 
+#### All {.tabset}
 
-selected_features <- grep(Tcell_signature, rownames(sce), value=TRUE)
+```{r CD4 Viz all signatures together}
+#| fig-width: 14
+#| fig-height: 10
+#| fig-cap: "Average expression of all signature genes across clusters"
+#| fig-alt: "Dot plot showing the average expression of signature genes across clusters, with color representing the average expression level and size representing the percentage of cells expressing the gene in each cluster."
+#| fig-note: "In this dot plot, each row represents a gene from the signature table, and each column represents a cluster. The color of the dots indicates the average expression level of the gene in that cluster, with red indicating higher expression and blue indicating lower expression. The size of the dots represents the percentage of cells in that cluster that express the gene. This visualization allows us to see which genes are differentially expressed across clusters and to identify potential markers for each cluster based on their expression patterns."
 
-
+selected_features <- signature_tbl %>%
+  pull(feature) %>%
+  unique()
+  
 m2 <- presto_markers %>%
   filter(feature %in% selected_features) %>%
   select(feature, group, avgExpr, pct_in) %>%
   left_join(signature_tbl, by = "feature") %>%
   mutate(signature_class = case_when(
-  cell_type %in% c("CD4","CD8","Th1","Th2","Th17","Tfh","Treg") ~ "Identity",
+  cell_type %in% c("CD4","CD8","Th1","Th2","Th17","Tfh","Treg", "CD8_Eff_Term", "TPEX", "NK") ~ "Identity",
   cell_type %in% c("Cytotoxic","IFN","Inflammatory","HLA") ~ "Function",
   cell_type %in% c("Naif","Memory","Activated","Exhausted",
                     "Resident","Prolif","Senescent","Apoptotic") ~ "State"
@@ -3432,26 +3028,32 @@ ggplot(m2,
 dir.create(
    file.path(
      DIR_RESULT,
-     "All_Tcells",
+     "CD4_Tcells",
      "Annotation",
      "Manual"),
    recursive = TRUE,
    showWarnings = FALSE)
 
 ggsave(
-       filename = file.path(
-         DIR_RESULT,
-         "All_Tcells",
-         "Annotation",
-         "Manual",
-         "Marker_Signatures_LT_Compartment_All_Signatures.png"),
-       width = 20, height = 10)
-)
+  filename = file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
+    "Manual",
+    "Marker_Signatures_LT_Compartment_All_Signatures.png"),
+  width = 20, 
+  height = 10)
 ```
 
-### View of specific signatures {.tabset}
+#### Specific {.tabset}
 
-```{r Viz specific signature}
+```{r CD4 Viz specific signature}
+#| fig-width: 14
+#| fig-height: 10
+#| fig-cap: "Average expression of specific signature genes across clusters"
+#| fig-alt: "Dot plot showing the average expression of signature genes across clusters, with color representing the average expression level and size representing the percentage of cells expressing the gene in each cluster."
+#| fig-note: "In this dot plot, each row represents a gene from the signature table, and each column represents a cluster. The color of the dots indicates the average expression level of the gene in that cluster, with red indicating higher expression and blue indicating lower expression. The size of the dots represents the percentage of cells in that cluster that express the gene. This visualization allows us to see which genes are differentially expressed across clusters and to identify potential markers for each cluster based on their expression patterns."
+
 m3 <- presto_markers %>%
   filter(feature %in% selected_features) %>%
   select(feature, group, avgExpr, pct_in) %>%
@@ -3465,8 +3067,9 @@ m3 <- presto_markers %>%
   ungroup()
 
 for (i in unique(m3$class)) {
-  p <- ggplot(m3 %>% filter(class == i), 
-         aes(x=feature, y=fct_reorder(as.character(group), group), color = avgExpr, size = pct_in)) +
+  p <- ggplot(
+    m3 %>% filter(class == i),
+    aes(x=feature, y=fct_reorder(as.character(group), group), color = avgExpr, size = pct_in)) +
     geom_point()+
     scale_color_gradient2(low = "blue", mid="white",high = "red")+
     # theme_minimal() +
@@ -3476,93 +3079,393 @@ for (i in unique(m3$class)) {
     labs(
     title = paste0("LT Compartment - ", i),
     x = "Genes markers",
-    y = "Clusters"
-  )
+    y = "Clusters")
   
   print(p)
-  
-  dir.create(
-    file.path(
-      DIR_RESULT,
-      "All_Tcells",
-      "Annotation",
-      "Manual"),
-    recursive = TRUE,
-    showWarnings = FALSE
-  )
   
   ggsave(
     filename = file.path(
       DIR_RESULT,
-      "All_Tcells",
+      "CD4_Tcells",
       "Annotation",
       "Manual",
       paste0("Marker_Signatures_LT_Compartment_", i, ".png")),
     plot = p,
-    width = 20, height = 10
-  )
+    width = 16,
+    height = 8)
 }
 ```
 
-For now I think that we don't need to be to specific on pop annotation because we have all Tcells. For now we have to identified major populations (CD4, CD8) by combining annotation from me + automatic + from PPA to be sure that we analyse the right populations later.
+### Module scores {.tabset}
 
-And then we extract count for specific pop cd8 and cd4 cells and perform a new clustering/annotation on each of them separately to have more precise subpopulations.
+We can also help us by calculating module scores for each signature, which will give us a quantitative measure of the expression of each signature in each cluster.
 
-```{r Combine annot}
-cluster_annotation_list <- list(
-  "0" = "CD4_naive_and_memory",
-  "1" = "CD8_Cytotox_exhausted",
-  "2" = "CD4_inflammed",
-  "3" = "CD8_cytotox_low_resident_inflammed",
-  "4" = "CD8_naive",
-  "5" = "???",
-  "6" = "Dying_Tcells",
-  "7" = "CD8_IFN"
+::: callout-tip
+This can help us to identify clusters that are enriched for specific signatures and to further characterize their identity and function.
+:::
+
+#### Run {.tabset}
+
+```{r CD4 Module score Run}
+genes_Activation <- c(
+  "CD69", "TNFRSF9", "CD40LG", "NR4A1", "FOS", "JUN"
 )
 
-# Add annotations to Seurat object
-seu$manual_annotation <- plyr::mapvalues(
-  seu$seurat_clusters,
-  from = names(cluster_annotation_list),
-  to = unlist(cluster_annotation_list)
+genes_IFN <- c(
+  "ISG15", "IFIT2", "IFIT3", "MX1", "STAT1", "IRF7"
 )
 
-# Names of cells with matching annotations between automatic (mine and PPA SingleR predictions) and manual (mine) annotation
-## But first let's harmonize the names between predicted.celltype.l3_jordan and predicted.celltype.l3
-seu$predicted.celltype.l3_jordan <- plyr::mapvalues(
-  seu$predicted.celltype.l3_jordan,
-  from = c("Non-Vd2 gd T cells", "Naive CD4 T cells", "Follicular helper T cells", "Terminal effector CD8 T cells", "Vd2 gd T cells", "MAIT cells", "Terminal effector CD4 T cells", "Th1/Th17 cells", "Th17 cells", "Th1 cells", "Th2 cells", "Effector memory CD8 T cells", "T regulatory cells", "Central memory CD8 T cells", "Naive CD8 T cells", "Natural killer cells", "Myeloid dendritic cells", "Progenitor cells"),
-  to = c("Non-Vd2 gd T cells", "Naive CD4 T cells", "Follicular helper T cells CD4", "Terminal effector CD8 T cells", "Vd2 gd T cells", "MAIT cells", "Terminal effector CD4 T cells", "Th1/Th17 cells CD4", "Th17 cells CD4", "Th1 cells CD4", "Th2 cells CD4", "Effector memory CD8 T cells", "T regulatory cells CD4", "Central memory CD8 T cells", "Naive CD8 T cells", "Natural killer cells", "Myeloid dendritic cells", "Progenitor cells")
+genes_Inflammatory <- c(
+  "NFKBIA", "NFKBIZ", "TNFAIP3", "NFKB1"
 )
 
-
-
-matched_cells <- WhichCells(
-  seu,
-  expression =
-    (
-      grepl("CD4", predicted.celltype.l3_jordan) &
-      grepl("CD4", predicted.celltype.l1) &
-      grepl("CD4", manual_annotation)
-    ) |
-    (
-      grepl("CD8", predicted.celltype.l3_jordan) &
-      grepl("CD8", predicted.celltype.l1) &
-      grepl("CD8", manual_annotation)
-    )
+genes_Prolif <- c(
+  "MKI67", "CENPE", "NCAPG", "KIFC1"
 )
-length(matched_cells)
-length(seu@meta.data$manual_annotation)
-# Le nombre de cellules avec annotation "Natural killer cells" dans predicted.celltype.l3_jordan
-length(
-  predicted_cells <- WhichCells(
-    seu,
-    expression = (predicted.celltype.l1 == "other T")
+
+genes_Th1 <- c(
+  "TBX21", "IFNG", "IL12RB2", "STAT4"
+)
+
+genes_Th2 <- c(
+  "GATA3", "IL4", "IL5", "IL13"
+)
+  
+genes_Th17 <- c(
+  "RORC", "CCR6", "IL23R", "IL17A"
+)
+
+genes_Treg <- c(
+  "FOXP3", "IL2RA", "CTLA4",
+  "IKZF2", "TIGIT"
+  )
+
+genes_Tfh <- c(
+  "BCL6", "CXCR5", "ICOS", "IL21"
+)
+
+genes_Cytotoxic <- c(
+  "PRF1", "GZMB", "GNLY", "NKG7"
+)
+
+genes_Naive <- c(
+  "CCR7", "SELL", "TCF7", "LEF1", "IL7R"
+)
+
+genes_Resident <- c(
+  "CD69", "ITGAE", "CXCR6", "RUNX3"
+)
+
+genes_Exhausted <- c(
+  "PDCD1", "HAVCR2", "LAG3", "TOX", "ENTPD1", "LAYN"
+)
+
+genes_TCM <- c(
+  "CCR7", "CD27", "CD28"
+)
+
+genes_Senescent <- c(
+  "KLRG1", "CDKN1A", "CDKN2A", "TP53"
+)
+
+genes_TEM <- c(
+  "GZMK", "CXCR3"
+  )
+
+genes_TerminalEff <- c(
+  "ZEB2", "PRDM1", "EOMES", "CX3CR1", "FGFBP2"
+)
+
+genes_TPEX <- c(
+  "TCF7", "SLAMF6", "CXCR5", "PDCD1"
+)
+
+seu_community_detected <- AddModuleScore(
+  seu_community_detected,
+  features = list(
+    Activation = genes_Activation,
+    IFN = genes_IFN,
+    Inflammatory = genes_Inflammatory,
+    Proliferation = genes_Prolif,
+    Naive = genes_Naive,
+    TCM = genes_TCM,
+    TEM = genes_TEM,
+    Cytotoxic = genes_Cytotoxic,
+    TerminalEff = genes_TerminalEff,
+    Exhausted = genes_Exhausted,
+    TPEX = genes_TPEX,
+    Treg = genes_Treg,
+    Tfh = genes_Tfh,
+    Th1 = genes_Th1,
+    Th2 = genes_Th2,
+    Th17 = genes_Th17,
+    Resident = genes_Resident,
+    Senescent = genes_Senescent
+  ),
+  name = "MS_",
+  assay = "RNA"
+)
+
+# !!! Becareful, respect list order in AddModule
+module_names <- names(list(
+  Activation = genes_Activation,
+  IFN = genes_IFN,
+  Inflammatory = genes_Inflammatory,
+  Proliferation = genes_Prolif,
+  Naive = genes_Naive,
+  TCM = genes_TCM,
+  TEM = genes_TEM,
+  Cytotoxic = genes_Cytotoxic,
+  TerminalEff = genes_TerminalEff,
+  Exhausted = genes_Exhausted,
+  TPEX = genes_TPEX,
+  Treg = genes_Treg,
+  Tfh = genes_Tfh,
+  Th1 = genes_Th1,
+  Th2 = genes_Th2,
+  Th17 = genes_Th17,
+  Resident = genes_Resident,
+  Senescent = genes_Senescent
 ))
+
+old_names <- paste0("MS_", seq_along(module_names))
+new_names <- paste0("MS_", module_names)
+
+colnames(seu_community_detected@meta.data)[
+  match(old_names, colnames(seu_community_detected@meta.data))
+] <- new_names
+```
+
+#### Visualize {.tabset}
+
+```{r CD4 Module score Viz 1}
+#| fig-width: 14
+#| fig-height: 10
+#| fig-cap: "Module scores for each signature across clusters - FeaturePlot"
+
+FeaturePlot(
+  seu_community_detected,
+  features = c(
+    "MS_Th1",
+    "MS_Th2",
+    "MS_Th17",
+    "MS_Treg",
+    "MS_Cytotoxic",
+    "MS_Tfh",
+    "MS_Naive",
+    "MS_Resident",
+    "MS_Exhausted",
+    "MS_TCM",
+    "MS_TEM",
+    "MS_TerminalEff",
+    "MS_TPEX",
+    "MS_Senescent",
+    "MS_Proliferation",
+    "MS_Inflammatory",
+    "MS_IFN",
+    "MS_Activation"
+  ),
+  ncol = 4,
+  order = TRUE
+)
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
+    "Manual",
+    "Featureplot_Module_score.png"),
+  width = 16,
+  height = 8)
+```
+
+```{r CD4 Module score Viz 2}
+#| fig-width: 14
+#| fig-height: 10
+#| fig-cap: "Module scores for each signature across clusters - Violin plot"
+
+VlnPlot(
+  seu_community_detected,
+  cols = pal,
+  features = c(
+    "MS_Th1",
+    "MS_Th2",
+    "MS_Th17",
+    "MS_Treg",
+    "MS_Cytotoxic",
+    "MS_Tfh",
+    "MS_Naive",
+    "MS_Resident",
+    "MS_Exhausted",
+    "MS_TCM",
+    "MS_TEM",
+    "MS_TerminalEff",
+    "MS_TPEX",
+    "MS_Senescent",
+    "MS_Proliferation",
+    "MS_Inflammatory",
+    "MS_IFN",
+    "MS_Activation"
+  ),
+  group.by = "seurat_clusters",
+  pt.size = 0,
+  ncol = 4)
+
+ggsave(
+  filename = file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
+    "Manual",
+    "Violinplot_Module_score.png"),
+  width = 16,
+  height = 8)
+```
+
+#### Z-scored
+
+Useful to see which clusters have high scores for which modules, and to help with manual annotation of clusters based on their module score profiles. For example, a cluster with high Th1 module score and low Th17 and Treg module scores might be annotated as a Th1-like cluster, while a cluster with high Treg module score might be annotated as a Treg-like cluster.
+
+```{r CD4 Z-score module Run}
+module_means <- seu_community_detected@meta.data %>%
+  group_by(seurat_clusters) %>%
+  summarise(
+    Activation = mean(MS_Activation),
+    IFN = mean(MS_IFN),
+    Inflammatory = mean(MS_Inflammatory),
+    Proliferation = mean(MS_Proliferation),
+    Naive = mean(MS_Naive),
+    TCM = mean(MS_TCM),
+    TEM = mean(MS_TEM),
+    Cytotoxic = mean(MS_Cytotoxic),
+    TerminalEff = mean(MS_TerminalEff),
+    Exhausted = mean(MS_Exhausted),
+    TPEX = mean(MS_TPEX),
+    Treg = mean(MS_Treg),
+    Tfh = mean(MS_Tfh),
+    Th1 = mean(MS_Th1),
+    Th2 = mean(MS_Th2),
+    Th17 = mean(MS_Th17),
+    Resident = mean(MS_Resident),
+    Senescent = mean(MS_Senescent)
+  )
+
+module_z <- module_means %>%
+  mutate(across(
+    -seurat_clusters,
+    ~ scale(.)[,1]))
+```
+
+```{r CD4 Z-score module Viz}
+mat <- as.matrix(module_z[, -1])
+rownames(mat) <- module_z$seurat_clusters
+
+pheatmap <- pheatmap(
+  mat,
+  cluster_rows = TRUE,
+  cluster_cols = FALSE,
+  scale = "none")
+
+ggsave(
+  plot = pheatmap,
+  filename = file.path(
+    DIR_RESULT,
+    "CD4_Tcells",
+    "Annotation",
+    "Manual",
+    "Heatmap_Module_Score_Zscore.png"),
+  width = 8,
+  height = 6)
 
 ```
 
-There is a lot of cells annotate gdTcells but I will not focus on them for now as I want to focus on CD4 and CD8 Tcells, and there are too different from cd4+ and cd8+.
+::: callout-warning
+Be careful we can compare clusters for a same signature but we can't compare scores between signatures because they are not on the same scale and are not directly comparable. The scores are relative to the expression of the genes in each signature and are not absolute measures of the underlying biology. Therefore, it's important to interpret the module scores in the context of each signature separately and not to compare scores across different signatures directly.
+:::
+
+::: callout-tip
+Maybe useful too fuse some clusters together based on their module score profiles if they show similar profiles and are not well separated in the UMAP. For example, if two clusters both have high Th1 module scores and low Th17 and Treg module scores, they might represent different subsets of Th1-like cells and could be fused together into a single Th1-like cluster for downstream analyses.
+:::
+
+### Choose manual annotations for each cluster {.tabset}
+
+```{r CD4 Choose manual annot}
+cluster_annotation_list <- list(
+  "0" = "CD4_Th17", 
+  "1" = "CD4_Naif_1", 
+  "2" = "CD4_Naif_2", 
+  "3" = "CD4_Inflammed_BCL6+", 
+  "4" = "CD4_Treg", 
+  "5" = "CD4_Naif_3", 
+  "6" = "CD4_Th1_Cytotox_IFN", 
+  "7" = "CD4neg_Memory", 
+  "8" = "CD4neg_Naif",
+  "9" = "CD4_Naif_5",
+  "10" = "CD8_Resident_Exhausted",
+  "11" = "???",
+  "12" = "???"
+)
+
+# Add annotations to Seurat object
+seu_community_detected$manual_annotation <- plyr::mapvalues(
+  seu_community_detected$seurat_clusters,
+  from = names(cluster_annotation_list),
+  to = unlist(cluster_annotation_list))
+
+# Output the annotation table
+annotation_df <- data.frame(
+  cluster = names(cluster_annotation_list),
+  annotation = unlist(cluster_annotation_list),
+  row.names = NULL
+)
+
+knitr::kable(annotation_df, 
+             col.names = c("Cluster", "Manual annotation"),
+             align = "c")
+```
+::::::::::
+
+## Combine automatic and manual annotations {.tabset}
+
+```{r CD4 Combine annot}
+seu_community_detected$consensus_annotation <- case_when(
+  seu_community_detected$seurat_clusters == "0" ~ "CD4_Naive",
+  seu_community_detected$seurat_clusters == "1" ~ "CD4_Effector_Th1/17_like",
+  seu_community_detected$seurat_clusters == "2" ~ "CD4_Effector_Stressed_Th2/Tfk_like",
+  seu_community_detected$seurat_clusters == "3" ~ "CD4_Treg_like",
+  seu_community_detected$seurat_clusters == "4" ~ "CD4_Treg",
+  seu_community_detected$seurat_clusters == "5" ~ "CD4_Temra-like",
+  seu_community_detected$seurat_clusters == "6" ~ "CD4_Naive_Th1_primed",
+  seu_community_detected$seurat_clusters == "7" ~ "CD4_Th1/17_like_Resident",
+  seu_community_detected$seurat_clusters == "8" ~ "CD4_Teffector_naive_resident",
+  seu_community_detected$seurat_clusters == "9" ~ "CD8",
+  TRUE ~ "Uncertain"
+)
+
+annotation_table <- seu_community_detected@meta.data %>%
+  count(seurat_clusters, consensus_annotation, name = "n_cells") %>%
+  arrange(as.numeric(as.character(seurat_clusters)))
+
+annotation_table %>%
+  kable(col.names = c("Cluster", "Consensus annotation", "Number of cells"),
+        align = "c",
+        caption = "Final CD4 cluster annotations with cell counts") %>%
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+::: callout-tip
+Create a unique col with a consensus annotation between the annotations (automatic mine, automatic PPA, manual mine) to use for downstream analyses and visualization. For example, if the 3 annotations agree on a cell type for a given cluster, we can assign that cell type to the cells in that cluster. If there is disagreement between the annotations, we can assign a more general cell type or keep it as "Uncertain" until we can resolve the discrepancy with further analyses.
+:::
+
+<br>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
 
 # Session Info {.tabset .unnumbered}
 
