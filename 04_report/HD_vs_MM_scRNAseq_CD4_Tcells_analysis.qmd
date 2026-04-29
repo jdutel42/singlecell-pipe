@@ -350,6 +350,7 @@ VlnPlot(seu,
   ggtitle("CD4-TotalSeqB (ADT)") +
   geom_hline(yintercept = 2, linetype = "dashed", color = "red")
 ```
+
 ```{r Cutoff CD4 subset Viz 2}
 VlnPlot(seu, 
         features = "CD4-TotalSeqB",
@@ -359,6 +360,7 @@ VlnPlot(seu,
   ggtitle("CD4-TotalSeqB (ADT)") +
   geom_hline(yintercept = 2, linetype = "dashed", color = "red")
 ```
+
 ```{r Cutoff CD4 subset Viz 3}
 hist(seu@assays$ADT@data["CD4-TotalSeqB", ],
      breaks = 50,
@@ -2881,6 +2883,7 @@ ggsave(
   width = 12,
   height = 6)
 ```
+
 ```{r CD4 PCA DimPlot RNA emulsion wrap}
 #| fig-width: 7
 #| fig-height: 10
@@ -3234,6 +3237,7 @@ ggsave(
   width = 12,
   height = 6)
 ```
+
 ```{r CD4 Harmony RNA DimPlot PCA after Harmony wrap}
 #| fig-width: 7
 #| fig-height: 10
@@ -5168,7 +5172,6 @@ for (i in unique(top10$cluster)) {
 }
 
 ```
-
 
 ```{r}
 # library(EnhancedVolcano)
@@ -7211,7 +7214,8 @@ In this case, genes belonging to the pathway `TNA_A_SIGNALING_VIA_NFKB` & `INTER
 
 ::: callout-tip
 -   A curve that rises (or fall) sharply early in the ranking indicates that the pathway is concentrated among the most upregulated genes and will have a positive NES (or downregulated genes and will havea negative NES). The more the **rise or fall is sharply early**, the more the pathway will be **highly significant** .\
-::: 
+:::
+
 ------------------------------------------------------------------------
 
 ######## Tick Marks (Vertical Bars)
@@ -8009,9 +8013,10 @@ The **maximum (or minimum) deviation from zero** corresponds to the **Enrichment
 In this case, genes belonging to the pathway `TNA_A_SIGNALING_VIA_NFKB` & `INTERFERON_GAMMA_RESPONSE` are predominantly **upregulated** while `MYC_TARGETS_V1` & `OXYDATIVE_PHOSPHORYLATION` are predominantly **downregulated**
 :::
 
-:::: callout-tip
+::: callout-tip
 -   A curve that rises (or fall) sharply early in the ranking indicates that the pathway is concentrated among the most upregulated genes and will have a positive NES (or downregulated genes and will havea negative NES). The more the **rise or fall is sharply early**, the more the pathway will be **highly significant** .\
-:::: 
+:::
+
 ------------------------------------------------------------------------
 
 ######## Tick Marks (Vertical Bars)
@@ -8939,5 +8944,5 @@ Plot B
 ::: my-highlight
 Some highlighted text.
 :::
-::::::::::::::::::::
-::::::::::::::::::::::::
+
+:::::::::::::::::::: ::::::::::::::::::::::::

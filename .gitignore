@@ -7,3 +7,10 @@ HD_vs_MM_scRNAseq_reanalysis.Rproj
 .Rproj.user/
 04_report/HD_vs_MM_scRNAseq_CD4_Tcells_analysis.html
 04_report/HD_vs_MM_scRNAseq_CD8_Tcells_analysis.html
+renv/library/
+renv/local/
+renv/cellar/
+renv/lock/
+renv/python/
+renv/sandbox/
+renv/staging/
